@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>COLIZEUM — личный кабинет</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: var(--tg-theme-bg-color, #0f1117);
+    --text: var(--tg-theme-text-color, #ffffff);
+    --hint: var(--tg-theme-hint-color, #8a8f98);
+    --link: var(--tg-theme-link-color, #4da3ff);
+    --button: var(--tg-theme-button-color, #4da3ff);
+    --button-text: var(--tg-theme-button-text-color, #ffffff);
+    --card: rgba(255, 255, 255, 0.06);
+    --card-border: rgba(255, 255, 255, 0.1);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 16px;
+    padding-bottom: 48px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--hint); font-size: 13px; margin-bottom: 20px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .tier-row { display: flex; align-items: center; justify-content: space-between; }
+  .tier-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .tier-silver { background: #9aa0a6; color: #111; }
+  .tier-gold { background: #d4af37; color: #111; }
+  .tier-premium { background: linear-gradient(90deg, #7b2ff7, #f107a3); color: #fff; }
+  .progress-track {
+    margin-top: 12px;
+    height: 8px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.12);
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: var(--button);
+    border-radius: 999px;
+    transition: width 0.4s ease;
+  }
+  .progress-label { margin-top: 8px; font-size: 13px; color: var(--hint); }
+  .section-title { font-size: 15px; font-weight: 600; margin: 22px 0 10px; }
+  .promo { padding: 10px 0; border-bottom: 1px solid var(--card-border); }
+  .promo:last-child { border-bottom: none; }
+  .promo-title { font-weight: 600; font-size: 14px; }
+  .promo-desc { font-size: 13px; color: var(--hint); margin-top: 2px; }
+  .empty-state { color: var(--hint); font-size: 13px; }
+  button.primary {
+    width: 100%;
+    padding: 13px;
+    border: none;
+    border-radius: 12px;
+    background: var(--button);
+    color: var(--button-text);
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.primary:disabled { opacity: 0.5; cursor: default; }
+  input[type="tel"], textarea {
+    width: 100%;
+    padding: 12px;
+    border-radius: 10px;
+    border: 1px solid var(--card-border);
+    background: rgba(255,255,255,0.04);
+    color: var(--text);
+    font-size: 14px;
+    margin-bottom: 10px;
+    font-family: inherit;
+  }
+  textarea { resize: vertical; min-height: 70px; }
+  .roulette-wheel {
+    width: 140px; height: 140px; margin: 0 auto 16px;
+    border-radius: 50%;
+    background: conic-gradient(#4da3ff 0turn 0.35turn, #7b2ff7 0.35turn 0.6turn, #f107a3 0.6turn 0.75turn, #d4af37 0.75turn 0.85turn, #4da3ff 0.85turn 1turn);
+    transition: transform 3s cubic-bezier(.17,.67,.16,1);
+  }
+  .result-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px; z-index: 10;
+  }
+  .result-card {
+    background: var(--bg); border: 1px solid var(--card-border);
+    border-radius: 16px; padding: 24px; text-align: center; max-width: 320px;
+  }
+  .hidden { display: none !important; }
+  .toast {
+    position: fixed; bottom: 16px; left: 16px; right: 16px;
+    background: var(--card); border: 1px solid var(--card-border);
+    border-radius: 10px; padding: 10px 14px; font-size: 13px; text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<h1>COLIZEUM</h1>
+<div class="sub">личный кабинет гостя</div>
+
+<div class="card" id="tier-card">
+  <div class="tier-row">
+    <div>Твой уровень</div>
+    <span class="tier-badge" id="tier-badge">—</span>
+  </div>
+  <div class="progress-track"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+  <div class="progress-label" id="progress-label">Загружаем данные…</div>
+</div>
+
+<div class="card hidden" id="phone-card">
+  <div class="section-title" style="margin-top:0">Подтверди номер телефона</div>
+  <div class="empty-state" style="margin-bottom:10px">Это тот номер, на который оформлена карта клиента клуба — по нему мы сверяем уровень.</div>
+  <input type="tel" id="phone-input" placeholder="+7 900 000-00-00" />
+  <button class="primary" id="phone-submit">Подтвердить</button>
+</div>
+
+<div class="section-title">Акции клуба</div>
+<div class="card" id="promotions-card">
+  <div class="empty-state">Загружаем акции…</div>
+</div>
+
+<div class="section-title">Рулетка</div>
+<div class="card" style="text-align:center">
+  <div class="roulette-wheel" id="wheel"></div>
+  <button class="primary" id="spin-button">Крутить</button>
+  <div class="empty-state" id="spin-hint" style="margin-top:10px"></div>
+</div>
+
+<div class="section-title">Идеи и пожелания</div>
+<div class="card">
+  <textarea id="idea-text" placeholder="Что добавить или изменить в клубе?"></textarea>
+  <button class="primary" id="idea-submit">Отправить</button>
+</div>
+
+<div id="result-overlay" class="result-overlay hidden">
+  <div class="result-card">
+    <div style="font-size:32px; margin-bottom:8px" id="result-emoji">🎉</div>
+    <div style="font-weight:600; font-size:16px; margin-bottom:8px" id="result-title"></div>
+    <div class="empty-state" id="result-instructions" style="margin-bottom:16px"></div>
+    <button class="primary" id="result-close">Понятно</button>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script>
+const tg = window.Telegram?.WebApp;
+tg?.ready();
+tg?.expand();
+
+const initData = tg?.initData || "";
+
+function showToast(msg) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.classList.remove("hidden");
+  setTimeout(() => el.classList.add("hidden"), 3000);
+}
+
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Ошибка сервера" }));
+    throw new Error(err.detail || "Ошибка сервера");
+  }
+  return res.json();
+}
+
+let me = null;
+
+function renderMe() {
+  const badge = document.getElementById("tier-badge");
+  badge.textContent = me.tier_label;
+  badge.className = "tier-badge tier-" + me.tier;
+
+  const fill = document.getElementById("progress-fill");
+  const label = document.getElementById("progress-label");
+
+  if (me.next_tier) {
+    // прогресс внутри текущей "ступени" — грубая оценка для полоски
+    const pct = Math.max(6, Math.min(100, 100 - (me.remaining_to_next_tier / (me.monthly_topup + me.remaining_to_next_tier || 1)) * 100));
+    fill.style.width = pct + "%";
+    label.textContent = `До уровня ${me.next_tier} осталось ${Math.round(me.remaining_to_next_tier).toLocaleString("ru-RU")} ₽ в этом месяце`;
+  } else {
+    fill.style.width = "100%";
+    label.textContent = "Максимальный уровень — спасибо, что ты с нами!";
+  }
+
+  document.getElementById("phone-card").classList.toggle("hidden", !!me.phone);
+
+  const spinButton = document.getElementById("spin-button");
+  const spinHint = document.getElementById("spin-hint");
+  spinButton.disabled = !me.can_spin;
+  spinHint.textContent = me.can_spin
+    ? "Один прокрут в " + me.spin_cooldown_hours + " часов"
+    : "Ты уже крутил(а) сегодня — заходи завтра";
+}
+
+async function loadMe() {
+  me = await api("/api/me", { initData });
+  renderMe();
+  loadPromotions();
+}
+
+async function loadPromotions() {
+  const res = await fetch(`/api/promotions?tier=${me.tier}`);
+  const promos = await res.json();
+  const card = document.getElementById("promotions-card");
+  if (!promos.length) {
+    card.innerHTML = '<div class="empty-state">Пока нет активных акций — загляни позже.</div>';
+    return;
+  }
+  card.innerHTML = promos.map(p => `
+    <div class="promo">
+      <div class="promo-title">${p.title}</div>
+      <div class="promo-desc">${p.description}</div>
+    </div>
+  `).join("");
+}
+
+document.getElementById("phone-submit").addEventListener("click", async () => {
+  const phone = document.getElementById("phone-input").value.trim();
+  if (!phone) return;
+  try {
+    me = await api("/api/link-phone", { initData, phone });
+    renderMe();
+    showToast("Номер сохранён");
+  } catch (e) {
+    showToast(e.message);
+  }
+});
+
+document.getElementById("spin-button").addEventListener("click", async () => {
+  const wheel = document.getElementById("wheel");
+  const spinButton = document.getElementById("spin-button");
+  spinButton.disabled = true;
+
+  const randomTurns = 4 + Math.random() * 2;
+  wheel.style.transform = `rotate(${randomTurns * 360}deg)`;
+
+  try {
+    const result = await api("/api/spin", { initData });
+    setTimeout(() => {
+      document.getElementById("result-title").textContent = result.prize_label;
+      document.getElementById("result-instructions").textContent = result.instructions;
+      document.getElementById("result-emoji").textContent = result.prize_id === "empty" ? "🙃" : "🎉";
+      document.getElementById("result-overlay").classList.remove("hidden");
+      tg?.HapticFeedback?.notificationOccurred(result.prize_id === "empty" ? "warning" : "success");
+    }, 3000);
+  } catch (e) {
+    showToast(e.message);
+    wheel.style.transform = "rotate(0deg)";
+    spinButton.disabled = false;
+  } finally {
+    setTimeout(loadMe, 3200);
+  }
+});
+
+document.getElementById("result-close").addEventListener("click", () => {
+  document.getElementById("result-overlay").classList.add("hidden");
+});
+
+document.getElementById("idea-submit").addEventListener("click", async () => {
+  const textEl = document.getElementById("idea-text");
+  const text = textEl.value.trim();
+  if (!text) return;
+  try {
+    await api("/api/ideas", { initData, text });
+    textEl.value = "";
+    showToast("Спасибо! Идея передана администратору");
+  } catch (e) {
+    showToast(e.message);
+  }
+});
+
+loadMe().catch(e => showToast(e.message));
+</script>
+</body>
+</html>
