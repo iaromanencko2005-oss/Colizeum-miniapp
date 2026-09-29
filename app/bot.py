@@ -49,7 +49,9 @@ async def cmd_start(message: Message):
         ]]
     )
     await message.answer(
-        "Привет! Открой личный кабинет COLIZEUM: там твой уровень, акции и рулетка.",
+        "Добро пожаловать в COLIZEUM.\n\n"
+        "Здесь — твой уровень, акции клуба и мини-игры с призами. "
+        "Открывай, когда удобно.",
         reply_markup=keyboard,
     )
 
@@ -99,29 +101,29 @@ async def cmd_set_topup(message: Message, command: CommandObject):
 
 @router.message(Command("add_promo"))
 async def cmd_add_promo(message: Message, command: CommandObject):
-    """Формат: /add_promo Название | Описание | silver
-    Третий параметр (уровень) необязателен, по умолчанию silver (видно всем)."""
+    """Формат: /add_promo Название | Описание | ссылка (необязательно)
+    Акции видны всем гостям клуба независимо от уровня."""
     if not is_admin(message.from_user.id):
         return
 
     if not command.args:
-        await message.answer("Формат: /add_promo Название | Описание | silver")
+        await message.answer("Формат: /add_promo Название | Описание | ссылка (необязательно)")
         return
 
     parts = [p.strip() for p in command.args.split("|")]
     if len(parts) < 2:
-        await message.answer("Формат: /add_promo Название | Описание | silver")
+        await message.answer("Формат: /add_promo Название | Описание | ссылка (необязательно)")
         return
 
     title, description = parts[0], parts[1]
-    min_tier = parts[2] if len(parts) > 2 and parts[2] in TIER_LABELS else "silver"
+    link = parts[2] if len(parts) > 2 and parts[2] else None
 
     db = SessionLocal()
     try:
-        promo = Promotion(title=title, description=description, min_tier=min_tier)
+        promo = Promotion(title=title, description=description, link=link)
         db.add(promo)
         db.commit()
-        await message.answer(f"Акция добавлена: «{title}» (видна с уровня {TIER_LABELS[min_tier]})")
+        await message.answer(f"Акция добавлена: «{title}»" + (f"\nСсылка: {link}" if link else ""))
     finally:
         db.close()
 
@@ -137,7 +139,7 @@ async def cmd_list_promotions(message: Message):
         if not promos:
             await message.answer("Активных акций пока нет. Добавь: /add_promo Название | Описание")
             return
-        lines = [f"#{p.id} [{TIER_LABELS[p.min_tier]}+] {p.title} — {p.description}" for p in promos]
+        lines = [f"#{p.id} {p.title} — {p.description}" for p in promos]
         await message.answer("\n".join(lines))
     finally:
         db.close()

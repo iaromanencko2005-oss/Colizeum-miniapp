@@ -16,17 +16,30 @@ from sqlalchemy import (
 from .database import Base
 
 # Пороги уровней в рублях за месяц — правь здесь, если правила программы
-# лояльности изменятся.
+# лояльности изменятся. Клиент ниже порога Silver всё равно попадает в
+# Silver — это базовый уровень программы, а не "нет уровня".
 TIER_THRESHOLDS = [
     ("silver", 0),
-    ("gold", 5000),
-    ("premium", 10000),
+    ("gold", 10000),
+    ("premium", 20000),
 ]
+
+# Порог, начиная с которого статус Silver закрепляется официально
+# (используется только в текстах "как устроены уровни" — на сам расчёт
+# уровня не влияет, см. TIER_THRESHOLDS выше).
+SILVER_QUALIFY_FROM = 5000
 
 TIER_LABELS = {
     "silver": "Silver",
     "gold": "Gold",
     "premium": "Premium",
+}
+
+# Кэшбэк по уровням, % — используется и в API (/api/tiers), и в текстах бота.
+TIER_CASHBACK = {
+    "silver": 10,
+    "gold": 15,
+    "premium": 20,
 }
 
 
@@ -56,6 +69,8 @@ class Client(Base):
     phone = Column(String, nullable=True, index=True)
     monthly_topup = Column(Float, default=0.0)
     last_spin_at = Column(DateTime, nullable=True)
+    last_dice_at = Column(DateTime, nullable=True)
+    last_probability_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -65,7 +80,8 @@ class Promotion(Base):
     id = Column(Integer, primary_key=True)
     title = Column(String, nullable=False)
     description = Column(String, nullable=False)
-    min_tier = Column(String, default="silver")  # с какого уровня видна акция
+    min_tier = Column(String, default="silver")  # оставлено на будущее, сейчас не фильтрует
+    link = Column(String, nullable=True)  # необязательная ссылка (например, на отзывы)
     active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -88,4 +104,20 @@ class SpinResult(Base):
     prize_id = Column(String, nullable=False)
     prize_label = Column(String, nullable=False)
     redeemed = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Booking(Base):
+    """Заявка из раздела «Быстрое бронирование» — администратор получает
+    её мгновенно сообщением от бота и подтверждает вручную."""
+    __tablename__ = "bookings"
+
+    id = Column(Integer, primary_key=True)
+    tg_id = Column(BigInteger, nullable=False)
+    tg_name = Column(String, nullable=True)
+    name = Column(String, nullable=False)
+    phone = Column(String, nullable=False)
+    time_text = Column(String, nullable=False)
+    seats_text = Column(String, nullable=True)
+    notes = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

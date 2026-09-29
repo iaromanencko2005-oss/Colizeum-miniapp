@@ -3,8 +3,13 @@
 
 Один сервис на Railway/Render запускает:
 - FastAPI-приложение, которое отдаёт данные для мини-приложения
-  (уровень, прогресс, акции, рулетка);
+  (уровень, прогресс, акции, рулетка, кости, «Дайс», бронирование);
 - Telegram-бота (long polling) фоновой задачей при старте.
+
+Все результаты игр (рулетка, кости, «Дайс») считаются здесь, на
+сервере — мини-приложение только показывает то, что вернул API. Это
+принципиально: если бы вероятности считались в браузере, любой гость
+мог бы подделать результат через консоль разработчика.
 
 Так проще для одного человека без опыта DevOps — не нужно поднимать
 два отдельных сервиса и синхронизировать их между собой.
@@ -13,6 +18,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import random
 from datetime import datetime, timedelta
 
 from fastapi import FastAPI, HTTPException, Depends
@@ -22,7 +28,10 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from .database import Base, engine, get_db
-from .models import Client, Promotion, Idea, SpinResult, get_tier, get_next_tier_info, TIER_LABELS
+from .models import (
+    Client, Promotion, Idea, SpinResult, Booking,
+    get_tier, get_next_tier_info, TIER_LABELS, TIER_THRESHOLDS, TIER_CASHBACK,
+)
 from .prizes import spin as spin_roulette
 from .telegram_auth import parse_and_verify, InvalidInitData
 from .bot import build_bot_and_dispatcher
@@ -31,7 +40,16 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("colizeum")
 
 ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
+ADMIN_IDS = {
+    int(x) for x in os.getenv("ADMIN_IDS", "").replace(" ", "").split(",") if x
+}
 SPIN_COOLDOWN_HOURS = int(os.getenv("SPIN_COOLDOWN_HOURS", "24"))
+DICE_COOLDOWN_HOURS = int(os.getenv("DICE_COOLDOWN_HOURS", "24"))
+PROBABILITY_COOLDOWN_HOURS = int(os.getenv("PROBABILITY_COOLDOWN_HOURS", "24"))
+
+# Насколько занижаем реальный шанс выигрыша в «Дайс» относительно того,
+# что гость выставил ползунком (0.3 = реальный шанс втрое ниже заявленного).
+PROBABILITY_HOUSE_FACTOR = float(os.getenv("PROBABILITY_HOUSE_FACTOR", "0.3"))
 
 Base.metadata.create_all(bind=engine)
 
@@ -64,9 +82,27 @@ class SpinPayload(BaseModel):
     initData: str
 
 
+class DicePayload(BaseModel):
+    initData: str
+
+
+class ProbabilityPayload(BaseModel):
+    initData: str
+    threshold: int  # 1..90, шанс выигрыша, который выставил гость ползунком
+
+
 class IdeaPayload(BaseModel):
     initData: str
     text: str
+
+
+class BookingPayload(BaseModel):
+    initData: str
+    name: str
+    phone: str
+    time_text: str
+    seats_text: str = ""
+    notes: str = ""
 
 
 class AdminTopupPayload(BaseModel):
@@ -89,26 +125,62 @@ def get_or_create_client(db: Session, tg_user: dict) -> Client:
     return client
 
 
+def cooldown_ok(last_at: datetime | None, hours: int) -> bool:
+    if not last_at:
+        return True
+    return datetime.utcnow() - last_at >= timedelta(hours=hours)
+
+
 def client_to_dict(client: Client) -> dict:
     tier = get_tier(client.monthly_topup)
     next_tier, remaining = get_next_tier_info(client.monthly_topup)
-    can_spin = True
-    if client.last_spin_at:
-        can_spin = datetime.utcnow() - client.last_spin_at >= timedelta(hours=SPIN_COOLDOWN_HOURS)
     return {
         "name": client.tg_name,
         "phone": client.phone,
         "monthly_topup": client.monthly_topup,
         "tier": tier,
         "tier_label": TIER_LABELS[tier],
+        "cashback_percent": TIER_CASHBACK[tier],
         "next_tier": TIER_LABELS.get(next_tier) if next_tier else None,
         "remaining_to_next_tier": remaining,
-        "can_spin": can_spin,
+        "can_spin": cooldown_ok(client.last_spin_at, SPIN_COOLDOWN_HOURS),
+        "can_dice": cooldown_ok(client.last_dice_at, DICE_COOLDOWN_HOURS),
+        "can_probability": cooldown_ok(client.last_probability_at, PROBABILITY_COOLDOWN_HOURS),
         "spin_cooldown_hours": SPIN_COOLDOWN_HOURS,
+        "dice_cooldown_hours": DICE_COOLDOWN_HOURS,
+        "probability_cooldown_hours": PROBABILITY_COOLDOWN_HOURS,
     }
 
 
+async def notify_admins(text: str):
+    """Шлёт сообщение всем ADMIN_IDS от имени бота — используется для
+    мгновенных уведомлений об идеях и заявках на бронирование. Если бот
+    ещё не запущен (нет BOT_TOKEN) — просто пропускает, ничего не падает."""
+    if _bot_instance is None:
+        return
+    for admin_id in ADMIN_IDS:
+        try:
+            await _bot_instance.send_message(admin_id, text)
+        except Exception as e:  # noqa: BLE001 — не роняем запрос гостя из-за проблемы с уведомлением
+            logger.warning("Не удалось отправить уведомление админу %s: %s", admin_id, e)
+
+
 # ---------- эндпоинты мини-приложения ----------
+
+@app.get("/api/tiers")
+def api_tiers():
+    """Статическая информация об уровнях программы лояльности — пороги
+    и кэшбэк, чтобы не дублировать эти цифры в коде мини-приложения."""
+    return [
+        {
+            "tier": name,
+            "label": TIER_LABELS[name],
+            "threshold": threshold,
+            "cashback_percent": TIER_CASHBACK[name],
+        }
+        for name, threshold in TIER_THRESHOLDS
+    ]
+
 
 @app.post("/api/me")
 def api_me(payload: InitDataPayload, db: Session = Depends(get_db)):
@@ -123,8 +195,8 @@ def api_me(payload: InitDataPayload, db: Session = Depends(get_db)):
 
 @app.post("/api/link-phone")
 def api_link_phone(payload: LinkPhonePayload, db: Session = Depends(get_db)):
-    """Клиент подтверждает номер телефона кнопкой Telegram request_contact —
-    так его карточка в мини-приложении связывается с записью в CRM/POS клуба."""
+    """Клиент подтверждает номер телефона — так его карточка в мини-приложении
+    связывается с записью в CRM/POS клуба."""
     try:
         tg_user = parse_and_verify(payload.initData)
     except InvalidInitData as e:
@@ -137,21 +209,16 @@ def api_link_phone(payload: LinkPhonePayload, db: Session = Depends(get_db)):
 
 
 @app.get("/api/promotions")
-def api_promotions(tier: str = "silver", db: Session = Depends(get_db)):
-    """Отдаёт акции, доступные для уровня tier и ниже него по иерархии."""
-    order = ["silver", "gold", "premium"]
-    max_index = order.index(tier) if tier in order else 0
-    visible_tiers = order[: max_index + 1]
-
+def api_promotions(db: Session = Depends(get_db)):
+    """Отдаёт все активные акции клуба — они не зависят от уровня клиента."""
     promos = (
         db.query(Promotion)
         .filter(Promotion.active == True)  # noqa: E712
-        .filter(Promotion.min_tier.in_(visible_tiers))
         .order_by(Promotion.created_at.desc())
         .all()
     )
     return [
-        {"id": p.id, "title": p.title, "description": p.description, "min_tier": p.min_tier}
+        {"id": p.id, "title": p.title, "description": p.description, "link": p.link}
         for p in promos
     ]
 
@@ -165,7 +232,7 @@ def api_spin(payload: SpinPayload, db: Session = Depends(get_db)):
 
     client = get_or_create_client(db, tg_user)
 
-    if client.last_spin_at and datetime.utcnow() - client.last_spin_at < timedelta(hours=SPIN_COOLDOWN_HOURS):
+    if not cooldown_ok(client.last_spin_at, SPIN_COOLDOWN_HOURS):
         next_available = client.last_spin_at + timedelta(hours=SPIN_COOLDOWN_HOURS)
         raise HTTPException(
             status_code=429,
@@ -182,16 +249,72 @@ def api_spin(payload: SpinPayload, db: Session = Depends(get_db)):
     return {
         "prize_id": prize.id,
         "prize_label": prize.label,
-        "instructions": (
-            "Ничего не поделаешь в этот раз — заходи завтра!"
-            if prize.id == "empty"
-            else "Покажи этот экран администратору на кассе, чтобы получить приз."
-        ),
+        "value": prize.value,
+        "instructions": "Покажи этот экран администратору на кассе, чтобы получить бонусы.",
     }
 
 
+@app.post("/api/dice")
+def api_dice(payload: DicePayload, db: Session = Depends(get_db)):
+    try:
+        tg_user = parse_and_verify(payload.initData)
+    except InvalidInitData as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+    client = get_or_create_client(db, tg_user)
+
+    if not cooldown_ok(client.last_dice_at, DICE_COOLDOWN_HOURS):
+        next_available = client.last_dice_at + timedelta(hours=DICE_COOLDOWN_HOURS)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Следующий бросок доступен после {next_available.isoformat()}",
+        )
+
+    value = random.randint(1, 6)
+    bonus = value * 10
+    client.last_dice_at = datetime.utcnow()
+    db.commit()
+
+    return {"value": value, "bonus": bonus}
+
+
+@app.post("/api/probability")
+def api_probability(payload: ProbabilityPayload, db: Session = Depends(get_db)):
+    try:
+        tg_user = parse_and_verify(payload.initData)
+    except InvalidInitData as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+    client = get_or_create_client(db, tg_user)
+
+    if not cooldown_ok(client.last_probability_at, PROBABILITY_COOLDOWN_HOURS):
+        next_available = client.last_probability_at + timedelta(hours=PROBABILITY_COOLDOWN_HOURS)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Следующая попытка доступна после {next_available.isoformat()}",
+        )
+
+    threshold = max(1, min(90, payload.threshold))
+    win_chance = (threshold / 100) * PROBABILITY_HOUSE_FACTOR
+    win = random.random() < win_chance
+
+    if win:
+        rolled_number = random.randint(1, threshold)
+    else:
+        rolled_number = random.randint(threshold + 1, 100)
+
+    reward = 0
+    if win:
+        reward = max(10, round(((100 - threshold) * 1.2) / 10) * 10)
+
+    client.last_probability_at = datetime.utcnow()
+    db.commit()
+
+    return {"win": win, "rolled_number": rolled_number, "reward": reward}
+
+
 @app.post("/api/ideas")
-def api_ideas(payload: IdeaPayload, db: Session = Depends(get_db)):
+async def api_ideas(payload: IdeaPayload, db: Session = Depends(get_db)):
     try:
         tg_user = parse_and_verify(payload.initData)
     except InvalidInitData as e:
@@ -203,6 +326,47 @@ def api_ideas(payload: IdeaPayload, db: Session = Depends(get_db)):
     idea = Idea(tg_id=tg_user["id"], tg_name=tg_user.get("first_name"), text=payload.text.strip())
     db.add(idea)
     db.commit()
+
+    name = tg_user.get("first_name") or tg_user.get("username") or "Гость"
+    await notify_admins(f"💡 Новая идея от {name}:\n\n{idea.text}")
+
+    return {"ok": True}
+
+
+@app.post("/api/booking")
+async def api_booking(payload: BookingPayload, db: Session = Depends(get_db)):
+    try:
+        tg_user = parse_and_verify(payload.initData)
+    except InvalidInitData as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+    if not payload.name.strip() or not payload.phone.strip() or not payload.time_text.strip():
+        raise HTTPException(status_code=400, detail="Заполни имя, телефон и время")
+
+    booking = Booking(
+        tg_id=tg_user["id"],
+        tg_name=tg_user.get("first_name"),
+        name=payload.name.strip(),
+        phone=payload.phone.strip(),
+        time_text=payload.time_text.strip(),
+        seats_text=payload.seats_text.strip(),
+        notes=payload.notes.strip(),
+    )
+    db.add(booking)
+    db.commit()
+
+    lines = [
+        "📅 Новая заявка на бронирование",
+        f"Имя: {booking.name}",
+        f"Телефон: {booking.phone}",
+        f"Время: {booking.time_text}",
+    ]
+    if booking.seats_text:
+        lines.append(f"Места: {booking.seats_text}")
+    if booking.notes:
+        lines.append(f"Пожелания: {booking.notes}")
+    await notify_admins("\n".join(lines))
+
     return {"ok": True}
 
 
@@ -225,16 +389,18 @@ def api_admin_topup(payload: AdminTopupPayload, db: Session = Depends(get_db)):
 # ---------- запуск бота вместе с веб-сервером ----------
 
 _bot_task: asyncio.Task | None = None
+_bot_instance = None
 
 
 @app.on_event("startup")
 async def start_bot():
-    global _bot_task
+    global _bot_task, _bot_instance
     if not os.getenv("BOT_TOKEN"):
         logger.warning("BOT_TOKEN не задан — бот не запущен, работает только веб-API")
         return
 
     bot, dp = build_bot_and_dispatcher()
+    _bot_instance = bot
 
     async def runner():
         try:
