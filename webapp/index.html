@@ -5,159 +5,349 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <title>COLIZEUM — личный кабинет</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600;700;800&family=Golos+Text:wght@400;500;600;700&display=swap">
 <style>
   :root {
-    --bg: var(--tg-theme-bg-color, #0f1117);
-    --text: var(--tg-theme-text-color, #ffffff);
-    --hint: var(--tg-theme-hint-color, #8a8f98);
-    --link: var(--tg-theme-link-color, #4da3ff);
-    --button: var(--tg-theme-button-color, #4da3ff);
-    --button-text: var(--tg-theme-button-text-color, #ffffff);
-    --card: rgba(255, 255, 255, 0.06);
-    --card-border: rgba(255, 255, 255, 0.1);
+    --bg: #000000;
+    --surface: #121212;
+    --border: #242424;
+    --text: #FFFFFF;
+    --muted: #9498A3;
+    --muted-2: #7A7E89;
+    --accent: #F5E92E;
   }
   * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); }
   body {
-    margin: 0;
-    background: var(--bg);
     color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    padding: 16px;
-    padding-bottom: 48px;
+    font-family: 'Golos Text', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding-bottom: 84px;
   }
-  h1 { font-size: 20px; margin: 0 0 4px; }
-  .sub { color: var(--hint); font-size: 13px; margin-bottom: 20px; }
+  a { color: inherit; text-decoration: none; }
+  .display { font-family: 'Unbounded', sans-serif; }
+
+  .panel { display: none; padding: 24px 20px 8px; }
+  .panel.active { display: block; }
+
+  .header-row { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
+  .header-row img { width: 32px; height: 32px; object-fit: contain; flex-shrink: 0; border-radius: 8px; }
+  .header-title { font-weight: 800; font-size: 13px; letter-spacing: 0.5px; }
+  .header-sub { font-size: 10.5px; color: var(--muted); }
+
+  h1.greeting { font-weight: 700; font-size: 24px; margin: 0 0 4px; line-height: 1.2; }
+  .sub { color: var(--muted); font-size: 13.5px; margin-bottom: 18px; }
+
   .card {
-    background: var(--card);
-    border: 1px solid var(--card-border);
-    border-radius: 14px;
-    padding: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 18px;
     margin-bottom: 14px;
   }
+  .section-title { font-weight: 700; font-size: 15px; margin: 4px 0 10px; }
+
   .tier-row { display: flex; align-items: center; justify-content: space-between; }
-  .tier-badge {
-    display: inline-block;
-    padding: 4px 12px;
-    border-radius: 999px;
-    font-weight: 600;
-    font-size: 14px;
-  }
-  .tier-silver { background: #9aa0a6; color: #111; }
-  .tier-gold { background: #d4af37; color: #111; }
-  .tier-premium { background: linear-gradient(90deg, #7b2ff7, #f107a3); color: #fff; }
-  .progress-track {
-    margin-top: 12px;
-    height: 8px;
-    border-radius: 999px;
-    background: rgba(255,255,255,0.12);
-    overflow: hidden;
-  }
-  .progress-fill {
-    height: 100%;
-    background: var(--button);
-    border-radius: 999px;
-    transition: width 0.4s ease;
-  }
-  .progress-label { margin-top: 8px; font-size: 13px; color: var(--hint); }
-  .section-title { font-size: 15px; font-weight: 600; margin: 22px 0 10px; }
-  .promo { padding: 10px 0; border-bottom: 1px solid var(--card-border); }
-  .promo:last-child { border-bottom: none; }
-  .promo-title { font-weight: 600; font-size: 14px; }
-  .promo-desc { font-size: 13px; color: var(--hint); margin-top: 2px; }
-  .empty-state { color: var(--hint); font-size: 13px; }
-  button.primary {
-    width: 100%;
-    padding: 13px;
-    border: none;
-    border-radius: 12px;
-    background: var(--button);
-    color: var(--button-text);
-    font-size: 15px;
-    font-weight: 600;
+  .tier-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); display: inline-block; margin-right: 6px; }
+  .tier-name { font-weight: 700; font-size: 15px; letter-spacing: 0.5px; color: var(--accent); }
+  .progress-track { margin-top: 12px; height: 8px; border-radius: 999px; background: var(--border); overflow: hidden; }
+  .progress-fill { height: 100%; background: var(--accent); border-radius: 999px; transition: width 0.4s ease; }
+  .progress-label { margin-top: 8px; font-size: 12.5px; color: var(--muted); }
+
+  .tier-list { border-radius: 20px; overflow: hidden; }
+  .tier-list-row { padding: 14px 16px; border-bottom: 1px solid #1C1C1C; }
+  .tier-list-row:last-child { border-bottom: none; }
+  .tier-list-row.current { background: rgba(245,233,46,0.06); }
+  .tier-list-head { display: flex; align-items: center; justify-content: space-between; }
+  .tier-list-name { font-family: 'Unbounded', sans-serif; font-weight: 700; font-size: 12.5px; letter-spacing: 0.4px; }
+  .tier-list-threshold { font-size: 11.5px; color: var(--muted); }
+  .tier-list-cashback { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .here-badge { font-size: 9px; font-weight: 700; color: #000; background: var(--accent); padding: 2px 6px; border-radius: 99px; margin-left: 6px; }
+  .hint { font-size: 11.5px; color: var(--muted-2); margin-top: 8px; }
+
+  .quick-row { display: flex; gap: 12px; margin-bottom: 14px; }
+  .quick-card {
+    flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+    padding: 16px; display: flex; flex-direction: column; gap: 10px; justify-content: space-between;
     cursor: pointer;
   }
-  button.primary:disabled { opacity: 0.5; cursor: default; }
-  input[type="tel"], textarea {
-    width: 100%;
-    padding: 12px;
-    border-radius: 10px;
-    border: 1px solid var(--card-border);
-    background: rgba(255,255,255,0.04);
-    color: var(--text);
-    font-size: 14px;
-    margin-bottom: 10px;
-    font-family: inherit;
+  .quick-title { font-size: 13.5px; font-weight: 600; }
+  .quick-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  .booking-cta {
+    background: var(--accent); border-radius: 16px; padding: 16px 18px;
+    display: flex; align-items: center; justify-content: space-between; cursor: pointer; margin-bottom: 14px;
   }
+  .booking-cta-title { font-size: 14px; font-weight: 700; color: #000; }
+  .booking-cta-sub { font-size: 12px; color: #000; opacity: 0.65; margin-top: 2px; }
+
+  input[type="tel"], input[type="text"], textarea {
+    width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); font-size: 14px; margin-bottom: 12px;
+    font-family: 'Golos Text', sans-serif;
+  }
+  input::placeholder, textarea::placeholder { color: #6E6E72; }
+  input:focus, textarea:focus { outline: none; border-color: var(--accent); }
   textarea { resize: vertical; min-height: 70px; }
-  .roulette-wheel {
-    width: 140px; height: 140px; margin: 0 auto 16px;
-    border-radius: 50%;
-    background: conic-gradient(#4da3ff 0turn 0.35turn, #7b2ff7 0.35turn 0.6turn, #f107a3 0.6turn 0.75turn, #d4af37 0.75turn 0.85turn, #4da3ff 0.85turn 1turn);
-    transition: transform 3s cubic-bezier(.17,.67,.16,1);
+  label.field-label { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; display: block; }
+
+  button.primary {
+    width: 100%; padding: 14px; border: none; border-radius: 14px;
+    background: var(--accent); color: #000; font-size: 15px; font-weight: 700;
+    font-family: 'Golos Text', sans-serif; cursor: pointer;
   }
-  .result-overlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+  button.secondary {
+    width: 100%; padding: 12px; border: 1px solid var(--accent); border-radius: 14px;
+    background: transparent; color: var(--accent); font-size: 14px; font-weight: 700;
+    font-family: 'Golos Text', sans-serif; cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+
+  .promo-card { display: flex; flex-direction: column; gap: 8px; }
+  .promo-title { font-size: 15px; font-weight: 600; }
+  .promo-desc { font-size: 13px; color: var(--muted); line-height: 1.4; }
+  .promo-link { display: flex; align-items: center; gap: 6px; color: var(--accent); font-size: 13px; font-weight: 600; }
+  .empty-state { color: var(--muted); font-size: 13px; }
+
+  .roulette-card { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  .wheel-wrap { position: relative; width: 188px; height: 188px; }
+  .wheel {
+    width: 188px; height: 188px; border-radius: 50%; border: 5px solid #000;
+    box-shadow: 0 0 0 1px var(--accent);
+    background: conic-gradient(from 0deg, var(--accent) 0deg 45deg, #000 45deg 90deg, var(--accent) 90deg 135deg, #000 135deg 180deg, var(--accent) 180deg 225deg, #000 225deg 270deg, var(--accent) 270deg 315deg, #000 315deg 360deg);
+    transition: transform 1.8s cubic-bezier(.17,.67,.32,1.28);
+  }
+  .wheel-pointer {
+    position: absolute; top: -4px; left: 50%; transform: translateX(-50%);
+    width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-top: 14px solid #fff;
+  }
+  .wheel-hub {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    width: 20px; height: 20px; border-radius: 50%; background: #000; border: 2px solid var(--accent);
+  }
+  .result-box {
+    width: 100%; background: #000; border: 1px solid var(--accent); border-radius: 14px; padding: 14px;
+    display: flex; flex-direction: column; gap: 4px; align-items: center;
+  }
+  .result-caption { font-size: 12px; color: var(--muted); }
+  .result-value { font-family: 'Unbounded', sans-serif; font-weight: 700; font-size: 15px; color: var(--accent); }
+  .result-note { font-size: 11.5px; color: var(--muted-2); text-align: center; margin-top: 4px; }
+
+  .dice-face {
+    width: 78px; height: 78px; border-radius: 18px; background: var(--accent);
     display: flex; align-items: center; justify-content: center;
-    padding: 24px; z-index: 10;
   }
-  .result-card {
-    background: var(--bg); border: 1px solid var(--card-border);
-    border-radius: 16px; padding: 24px; text-align: center; max-width: 320px;
+  .dice-face span { font-family: 'Unbounded', sans-serif; font-weight: 800; font-size: 32px; color: #000; }
+  @keyframes diceBounce {
+    0%{transform:translateY(0) rotate(0deg);}
+    20%{transform:translateY(-16px) rotate(85deg);}
+    40%{transform:translateY(0) rotate(170deg);}
+    60%{transform:translateY(-9px) rotate(255deg);}
+    80%{transform:translateY(0) rotate(330deg);}
+    100%{transform:translateY(0) rotate(360deg);}
+  }
+  .dice-face.rolling { animation: diceBounce 1s ease-in-out; }
+
+  .prob-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .prob-value { font-family: 'Unbounded', sans-serif; font-weight: 700; font-size: 15px; color: var(--accent); }
+  input[type="range"] {
+    -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 99px;
+    background: var(--border); accent-color: var(--accent); margin: 0 0 14px;
+  }
+
+  .toast {
+    position: fixed; bottom: 78px; left: 16px; right: 16px;
+    background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    border-radius: 10px; padding: 10px 14px; font-size: 13px; text-align: center; z-index: 20;
   }
   .hidden { display: none !important; }
-  .toast {
-    position: fixed; bottom: 16px; left: 16px; right: 16px;
-    background: var(--card); border: 1px solid var(--card-border);
-    border-radius: 10px; padding: 10px 14px; font-size: 13px; text-align: center;
+
+  .bottom-nav {
+    position: fixed; bottom: 0; left: 0; right: 0; background: #000; border-top: 1px solid #1C1C1C;
+    display: flex; align-items: center; justify-content: space-around;
+    padding: 10px 6px calc(env(safe-area-inset-bottom, 0px) + 10px) 6px;
   }
+  .nav-item {
+    display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--muted-2);
+    background: none; border: none; font-family: 'Golos Text', sans-serif; font-size: 10.5px; cursor: pointer;
+  }
+  .nav-item.active { color: var(--accent); font-weight: 600; }
+  .nav-item svg { width: 20px; height: 20px; }
 </style>
 </head>
 <body>
 
-<h1>COLIZEUM</h1>
-<div class="sub">личный кабинет гостя</div>
-
-<div class="card" id="tier-card">
-  <div class="tier-row">
-    <div>Твой уровень</div>
-    <span class="tier-badge" id="tier-badge">—</span>
+<div class="panel active" id="panel-cabinet">
+  <div class="header-row">
+    <img src="logo-icon.jpg" alt="COLIZEUM">
+    <div>
+      <div class="header-title display">COLIZEUM</div>
+      <div class="header-sub">Саввинская</div>
+    </div>
   </div>
-  <div class="progress-track"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
-  <div class="progress-label" id="progress-label">Загружаем данные…</div>
-</div>
 
-<div class="card hidden" id="phone-card">
-  <div class="section-title" style="margin-top:0">Подтверди номер телефона</div>
-  <div class="empty-state" style="margin-bottom:10px">Это тот номер, на который оформлена карта клиента клуба — по нему мы сверяем уровень.</div>
-  <input type="tel" id="phone-input" placeholder="+7 900 000-00-00" />
-  <button class="primary" id="phone-submit">Подтвердить</button>
-</div>
+  <h1 class="greeting display" id="greeting">Привет</h1>
+  <div class="sub">Это твой личный кабинет COLIZEUM</div>
 
-<div class="section-title">Акции клуба</div>
-<div class="card" id="promotions-card">
-  <div class="empty-state">Загружаем акции…</div>
-</div>
-
-<div class="section-title">Рулетка</div>
-<div class="card" style="text-align:center">
-  <div class="roulette-wheel" id="wheel"></div>
-  <button class="primary" id="spin-button">Крутить</button>
-  <div class="empty-state" id="spin-hint" style="margin-top:10px"></div>
-</div>
-
-<div class="section-title">Идеи и пожелания</div>
-<div class="card">
-  <textarea id="idea-text" placeholder="Что добавить или изменить в клубе?"></textarea>
-  <button class="primary" id="idea-submit">Отправить</button>
-</div>
-
-<div id="result-overlay" class="result-overlay hidden">
-  <div class="result-card">
-    <div style="font-size:32px; margin-bottom:8px" id="result-emoji">🎉</div>
-    <div style="font-weight:600; font-size:16px; margin-bottom:8px" id="result-title"></div>
-    <div class="empty-state" id="result-instructions" style="margin-bottom:16px"></div>
-    <button class="primary" id="result-close">Понятно</button>
+  <div class="card" id="tier-card">
+    <div class="tier-row">
+      <div><span class="tier-dot"></span><span class="tier-name" id="tier-name">—</span></div>
+      <div class="hint" id="tier-topup" style="margin:0"></div>
+    </div>
+    <div class="progress-track"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+    <div class="progress-label" id="progress-label">Загружаем данные…</div>
   </div>
+
+  <div class="card hidden" id="phone-card">
+    <div class="section-title" style="margin-top:0">Подтверди номер телефона</div>
+    <div class="empty-state" style="margin-bottom:10px">Это номер, на который оформлена карта клиента клуба — по нему сверяем уровень.</div>
+    <input type="tel" id="phone-input" placeholder="+7 999 123-45-67" />
+    <button class="primary" id="phone-submit">Подтвердить</button>
+  </div>
+
+  <div class="section-title">Как устроены уровни</div>
+  <div class="card tier-list" id="tier-list" style="padding:0">
+    <div class="empty-state" style="padding:16px">Загружаем…</div>
+  </div>
+  <div class="hint" style="margin-bottom:18px">Статус считается по сумме пополнений за календарный месяц</div>
+
+  <div class="quick-row">
+    <div class="quick-card" onclick="showPanel('activities')">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="3"/><circle cx="9" cy="9" r="1" fill="var(--accent)" stroke="none"/><circle cx="15" cy="15" r="1" fill="var(--accent)" stroke="none"/><circle cx="12" cy="12" r="1" fill="var(--accent)" stroke="none"/></svg>
+      <div><div class="quick-title">Рулетка доступна</div><div class="quick-sub">Крутни сейчас</div></div>
+    </div>
+    <div class="quick-card" onclick="showPanel('promotions')">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="1.5"/><path d="M4 10h16"/><path d="M12 10v10"/><path d="M12 10c-1.5-4-6-4-6-1.2C6 10 8 10 12 10Z"/><path d="M12 10c1.5-4 6-4 6-1.2C18 10 16 10 12 10Z"/></svg>
+      <div><div class="quick-title">Акции клуба</div><div class="quick-sub">Посмотреть</div></div>
+    </div>
+  </div>
+
+  <div class="booking-cta" onclick="showPanel('booking')">
+    <div><div class="booking-cta-title">Быстрое бронирование</div><div class="booking-cta-sub">Имя, телефон, время — за 20 секунд</div></div>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+  </div>
+
+  <div class="section-title">Есть идея?</div>
+  <div class="card">
+    <div class="empty-state" style="margin-bottom:10px">Расскажи, что улучшить в клубе — читаем каждое сообщение.</div>
+    <textarea id="idea-text" placeholder="Например: добавить ещё один вид напитков"></textarea>
+    <button class="primary" id="idea-submit">Отправить</button>
+  </div>
+</div>
+
+<div class="panel" id="panel-promotions">
+  <div class="header-row">
+    <img src="logo-icon.jpg" alt="COLIZEUM">
+    <div>
+      <div class="header-title display">COLIZEUM</div>
+      <div class="header-sub">Саввинская</div>
+    </div>
+  </div>
+  <h1 class="greeting display" style="font-size:22px">Акции клуба</h1>
+  <div class="sub">Доступны всем гостям — независимо от уровня</div>
+  <div id="promotions-list"><div class="empty-state">Загружаем акции…</div></div>
+</div>
+
+<div class="panel" id="panel-activities">
+  <div class="header-row">
+    <img src="logo-icon.jpg" alt="COLIZEUM">
+    <div>
+      <div class="header-title display">COLIZEUM</div>
+      <div class="header-sub">Саввинская</div>
+    </div>
+  </div>
+  <h1 class="greeting display" style="font-size:22px">Активности</h1>
+  <div class="sub">Крути, выигрывай, возвращайся</div>
+
+  <div class="card roulette-card">
+    <div class="wheel-wrap">
+      <div class="wheel" id="wheel"></div>
+      <div class="wheel-pointer"></div>
+      <div class="wheel-hub"></div>
+    </div>
+    <button class="primary" id="spin-button">Крутить</button>
+    <div class="result-box hidden" id="spin-result">
+      <div class="result-caption">Твой приз</div>
+      <div class="result-value" id="spin-result-value"></div>
+      <div class="result-note">Покажи этот экран администратору на кассе</div>
+    </div>
+    <div class="hint" id="spin-hint">Бесплатный прокрут — раз в 24 часа</div>
+  </div>
+
+  <div class="card" style="display:flex;flex-direction:column;align-items:center;gap:12px">
+    <div style="width:100%;display:flex;align-items:center;justify-content:space-between">
+      <div style="font-weight:700;font-size:14px">Кости на баланс</div>
+      <div style="font-size:11px;color:var(--muted)">×10 бонусов</div>
+    </div>
+    <div class="dice-face" id="dice-face"><span id="dice-label">–</span></div>
+    <div class="result-value hidden" id="dice-bonus" style="font-size:13px"></div>
+    <button class="secondary" id="dice-button">Бросить кубик</button>
+    <div class="hint" id="dice-hint">Бесплатный бросок — раз в 24 часа</div>
+  </div>
+
+  <div class="card">
+    <div class="section-title" style="margin:0 0 2px">Дайс</div>
+    <div class="empty-state" style="margin-bottom:14px">Выбери шанс на выигрыш и рискни</div>
+    <div class="prob-row">
+      <div class="empty-state">Шанс выигрыша</div>
+      <div class="prob-value" id="prob-value">50%</div>
+    </div>
+    <input type="range" min="1" max="90" value="50" id="prob-slider">
+    <button class="primary" id="prob-button">Бросить</button>
+    <div class="result-box hidden" id="prob-result" style="margin-top:14px;border-color:var(--border)">
+      <div class="result-caption" id="prob-rolled"></div>
+      <div class="result-value" id="prob-result-text"></div>
+    </div>
+    <div class="hint" id="prob-hint" style="margin-top:10px">Бесплатная попытка — раз в 24 часа</div>
+  </div>
+</div>
+
+<div class="panel" id="panel-booking">
+  <div class="header-row">
+    <img src="logo-icon.jpg" alt="COLIZEUM">
+    <div>
+      <div class="header-title display">COLIZEUM</div>
+      <div class="header-sub">Саввинская</div>
+    </div>
+  </div>
+  <h1 class="greeting display" style="font-size:22px">Быстрое бронирование</h1>
+  <div class="sub">Заполни — администратор подтвердит место</div>
+
+  <label class="field-label" for="b-name">Имя</label>
+  <input type="text" id="b-name" placeholder="Например, Игорь">
+
+  <label class="field-label" for="b-phone">Телефон</label>
+  <input type="tel" id="b-phone" placeholder="+7 999 123-45-67">
+
+  <label class="field-label" for="b-time">Время брони</label>
+  <input type="text" id="b-time" placeholder="Например, сегодня в 19:00">
+
+  <label class="field-label" for="b-seats">Места</label>
+  <input type="text" id="b-seats" placeholder="Например, два места рядом в стандарте">
+
+  <label class="field-label" for="b-notes">Пожелания</label>
+  <textarea id="b-notes" placeholder="Например: предварительно необходимо скачать игру Rust"></textarea>
+
+  <button class="primary" id="booking-submit">Отправить заявку</button>
+</div>
+
+<div class="bottom-nav">
+  <button class="nav-item active" data-panel="cabinet">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 16 0"/><path d="M12 12l4-4"/><circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none"/></svg>
+    Кабинет
+  </button>
+  <button class="nav-item" data-panel="promotions">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="1.5"/><path d="M4 10h16"/><path d="M12 10v10"/><path d="M12 10c-1.5-4-6-4-6-1.2C6 10 8 10 12 10Z"/><path d="M12 10c1.5-4 6-4 6-1.2C18 10 16 10 12 10Z"/></svg>
+    Акции
+  </button>
+  <button class="nav-item" data-panel="activities">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="3"/><circle cx="9" cy="9" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="15" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/></svg>
+    Активности
+  </button>
+  <button class="nav-item" data-panel="booking">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="16" rx="2.5"/><path d="M4 10h16"/><path d="M8 3v4"/><path d="M16 3v4"/></svg>
+    Бронь
+  </button>
 </div>
 
 <div id="toast" class="toast hidden"></div>
@@ -168,6 +358,7 @@ tg?.ready();
 tg?.expand();
 
 const initData = tg?.initData || "";
+const tgUser = tg?.initDataUnsafe?.user || null;
 
 function showToast(msg) {
   const el = document.getElementById("toast");
@@ -175,6 +366,16 @@ function showToast(msg) {
   el.classList.remove("hidden");
   setTimeout(() => el.classList.add("hidden"), 3000);
 }
+
+function showPanel(name) {
+  document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+  document.getElementById("panel-" + name).classList.add("active");
+  document.querySelectorAll(".nav-item").forEach(b => b.classList.toggle("active", b.dataset.panel === name));
+  window.scrollTo(0, 0);
+}
+document.querySelectorAll(".nav-item").forEach(btn => {
+  btn.addEventListener("click", () => showPanel(btn.dataset.panel));
+});
 
 async function api(path, body) {
   const res = await fetch(path, {
@@ -190,20 +391,24 @@ async function api(path, body) {
 }
 
 let me = null;
+let tiers = null;
+
+function fmt(n) { return Math.round(n).toLocaleString("ru-RU"); }
 
 function renderMe() {
-  const badge = document.getElementById("tier-badge");
-  badge.textContent = me.tier_label;
-  badge.className = "tier-badge tier-" + me.tier;
+  document.getElementById("greeting").textContent = "Привет, " + (tgUser?.first_name || "гость");
+
+  document.getElementById("tier-name").textContent = me.tier_label.toUpperCase();
+  document.getElementById("tier-topup").textContent = fmt(me.monthly_topup) + " ₽ в этом месяце";
 
   const fill = document.getElementById("progress-fill");
   const label = document.getElementById("progress-label");
+  const maxThreshold = tiers ? tiers[tiers.length - 1].threshold : me.monthly_topup + me.remaining_to_next_tier;
 
   if (me.next_tier) {
-    // прогресс внутри текущей "ступени" — грубая оценка для полоски
-    const pct = Math.max(6, Math.min(100, 100 - (me.remaining_to_next_tier / (me.monthly_topup + me.remaining_to_next_tier || 1)) * 100));
+    const pct = Math.max(4, Math.min(100, (me.monthly_topup / maxThreshold) * 100));
     fill.style.width = pct + "%";
-    label.textContent = `До уровня ${me.next_tier} осталось ${Math.round(me.remaining_to_next_tier).toLocaleString("ru-RU")} ₽ в этом месяце`;
+    label.innerHTML = fmt(me.remaining_to_next_tier) + " ₽ до уровня <b style=\"color:#fff\">" + me.next_tier + "</b>";
   } else {
     fill.style.width = "100%";
     label.textContent = "Максимальный уровень — спасибо, что ты с нами!";
@@ -211,32 +416,62 @@ function renderMe() {
 
   document.getElementById("phone-card").classList.toggle("hidden", !!me.phone);
 
-  const spinButton = document.getElementById("spin-button");
-  const spinHint = document.getElementById("spin-hint");
-  spinButton.disabled = !me.can_spin;
-  spinHint.textContent = me.can_spin
-    ? "Один прокрут в " + me.spin_cooldown_hours + " часов"
-    : "Ты уже крутил(а) сегодня — заходи завтра";
+  document.getElementById("spin-button").disabled = !me.can_spin;
+  document.getElementById("spin-hint").textContent = me.can_spin
+    ? "Бесплатный прокрут — раз в " + me.spin_cooldown_hours + " часов"
+    : "Доступно через 24 часа";
+
+  document.getElementById("dice-button").disabled = !me.can_dice;
+  document.getElementById("dice-hint").textContent = me.can_dice
+    ? "Бесплатный бросок — раз в " + me.dice_cooldown_hours + " часов"
+    : "Доступно через 24 часа";
+
+  document.getElementById("prob-button").disabled = !me.can_probability;
+  document.getElementById("prob-hint").textContent = me.can_probability
+    ? "Бесплатная попытка — раз в " + me.probability_cooldown_hours + " часов"
+    : "Доступно через 24 часа";
+}
+
+function renderTiers() {
+  const list = document.getElementById("tier-list");
+  list.innerHTML = tiers.map(t => `
+    <div class="tier-list-row ${me && me.tier === t.tier ? 'current' : ''}">
+      <div class="tier-list-head">
+        <div><span class="tier-list-name" style="color:${t.tier === 'premium' ? '#fff' : (me && me.tier === t.tier ? 'var(--accent)' : '#B5B5B8')}">${t.label.toUpperCase()}</span>${me && me.tier === t.tier ? '<span class="here-badge">ТЫ ЗДЕСЬ</span>' : ''}</div>
+        <div class="tier-list-threshold">от ${fmt(t.threshold)} ₽/мес</div>
+      </div>
+      <div class="tier-list-cashback">Кэшбэк ${t.cashback_percent}%</div>
+    </div>
+  `).join("");
+}
+
+async function loadTiers() {
+  const res = await fetch("/api/tiers");
+  tiers = await res.json();
+  renderTiers();
 }
 
 async function loadMe() {
   me = await api("/api/me", { initData });
   renderMe();
-  loadPromotions();
+  if (tiers) renderTiers();
 }
 
 async function loadPromotions() {
-  const res = await fetch(`/api/promotions?tier=${me.tier}`);
+  const res = await fetch("/api/promotions");
   const promos = await res.json();
-  const card = document.getElementById("promotions-card");
+  const wrap = document.getElementById("promotions-list");
   if (!promos.length) {
-    card.innerHTML = '<div class="empty-state">Пока нет активных акций — загляни позже.</div>';
+    wrap.innerHTML = '<div class="empty-state">Пока нет активных акций — загляни позже.</div>';
     return;
   }
-  card.innerHTML = promos.map(p => `
-    <div class="promo">
+  wrap.innerHTML = promos.map(p => `
+    <div class="card promo-card">
       <div class="promo-title">${p.title}</div>
       <div class="promo-desc">${p.description}</div>
+      ${p.link ? `<a class="promo-link" href="${p.link}" target="_blank" rel="noopener">Оставить отзыв
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+      </a>` : ""}
     </div>
   `).join("");
 }
@@ -247,6 +482,7 @@ document.getElementById("phone-submit").addEventListener("click", async () => {
   try {
     me = await api("/api/link-phone", { initData, phone });
     renderMe();
+    if (tiers) renderTiers();
     showToast("Номер сохранён");
   } catch (e) {
     showToast(e.message);
@@ -255,32 +491,80 @@ document.getElementById("phone-submit").addEventListener("click", async () => {
 
 document.getElementById("spin-button").addEventListener("click", async () => {
   const wheel = document.getElementById("wheel");
-  const spinButton = document.getElementById("spin-button");
-  spinButton.disabled = true;
+  const btn = document.getElementById("spin-button");
+  btn.disabled = true;
+  document.getElementById("spin-result").classList.add("hidden");
 
-  const randomTurns = 4 + Math.random() * 2;
-  wheel.style.transform = `rotate(${randomTurns * 360}deg)`;
+  const randomTurns = 3 + Math.random();
+  wheel.style.transform = `rotate(${1080 + randomTurns * 360}deg)`;
 
   try {
     const result = await api("/api/spin", { initData });
     setTimeout(() => {
-      document.getElementById("result-title").textContent = result.prize_label;
-      document.getElementById("result-instructions").textContent = result.instructions;
-      document.getElementById("result-emoji").textContent = result.prize_id === "empty" ? "🙃" : "🎉";
-      document.getElementById("result-overlay").classList.remove("hidden");
-      tg?.HapticFeedback?.notificationOccurred(result.prize_id === "empty" ? "warning" : "success");
-    }, 3000);
+      document.getElementById("spin-result-value").textContent = "+" + result.value + " бонусов";
+      document.getElementById("spin-result").classList.remove("hidden");
+      tg?.HapticFeedback?.notificationOccurred("success");
+      loadMe();
+    }, 1800);
   } catch (e) {
     showToast(e.message);
     wheel.style.transform = "rotate(0deg)";
-    spinButton.disabled = false;
-  } finally {
-    setTimeout(loadMe, 3200);
+    btn.disabled = false;
   }
 });
 
-document.getElementById("result-close").addEventListener("click", () => {
-  document.getElementById("result-overlay").classList.add("hidden");
+document.getElementById("dice-button").addEventListener("click", async () => {
+  const face = document.getElementById("dice-face");
+  const btn = document.getElementById("dice-button");
+  btn.disabled = true;
+  document.getElementById("dice-bonus").classList.add("hidden");
+  face.classList.add("rolling");
+
+  try {
+    const result = await api("/api/dice", { initData });
+    setTimeout(() => {
+      face.classList.remove("rolling");
+      document.getElementById("dice-label").textContent = result.value;
+      const bonusEl = document.getElementById("dice-bonus");
+      bonusEl.textContent = "+" + result.bonus + " бонусов на баланс";
+      bonusEl.classList.remove("hidden");
+      loadMe();
+    }, 1000);
+  } catch (e) {
+    face.classList.remove("rolling");
+    showToast(e.message);
+    btn.disabled = false;
+  }
+});
+
+const probSlider = document.getElementById("prob-slider");
+probSlider.addEventListener("input", () => {
+  document.getElementById("prob-value").textContent = probSlider.value + "%";
+});
+
+document.getElementById("prob-button").addEventListener("click", async () => {
+  const btn = document.getElementById("prob-button");
+  btn.disabled = true;
+  document.getElementById("prob-result").classList.add("hidden");
+
+  try {
+    const threshold = parseInt(probSlider.value, 10);
+    const result = await api("/api/probability", { initData, threshold });
+    document.getElementById("prob-rolled").textContent = "Выпало число: " + result.rolled_number;
+    const textEl = document.getElementById("prob-result-text");
+    if (result.win) {
+      textEl.textContent = "Повезло! +" + result.reward + " бонусов";
+      textEl.style.color = "var(--accent)";
+    } else {
+      textEl.textContent = "Не повезло — следующая попытка через 24 часа";
+      textEl.style.color = "var(--muted)";
+    }
+    document.getElementById("prob-result").classList.remove("hidden");
+    loadMe();
+  } catch (e) {
+    showToast(e.message);
+    btn.disabled = false;
+  }
 });
 
 document.getElementById("idea-submit").addEventListener("click", async () => {
@@ -296,7 +580,33 @@ document.getElementById("idea-submit").addEventListener("click", async () => {
   }
 });
 
-loadMe().catch(e => showToast(e.message));
+document.getElementById("booking-submit").addEventListener("click", async () => {
+  const name = document.getElementById("b-name").value.trim();
+  const phone = document.getElementById("b-phone").value.trim();
+  const timeText = document.getElementById("b-time").value.trim();
+  const seatsText = document.getElementById("b-seats").value.trim();
+  const notes = document.getElementById("b-notes").value.trim();
+
+  if (!name || !phone || !timeText) {
+    showToast("Заполни имя, телефон и время");
+    return;
+  }
+
+  try {
+    await api("/api/booking", { initData, name, phone, time_text: timeText, seats_text: seatsText, notes });
+    showToast("Заявка отправлена — администратор скоро подтвердит");
+    document.getElementById("b-name").value = "";
+    document.getElementById("b-phone").value = "";
+    document.getElementById("b-time").value = "";
+    document.getElementById("b-seats").value = "";
+    document.getElementById("b-notes").value = "";
+  } catch (e) {
+    showToast(e.message);
+  }
+});
+
+Promise.all([loadTiers(), loadMe()]).catch(e => showToast(e.message));
+loadPromotions().catch(() => {});
 </script>
 </body>
 </html>
