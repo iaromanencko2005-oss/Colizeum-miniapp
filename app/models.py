@@ -9,7 +9,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
-    Column, Integer, String, Float, DateTime, Boolean, BigInteger, func,
+    Column, Integer, String, Float, DateTime, Boolean, BigInteger, LargeBinary, Text, func,
 )
 
 from .database import Base
@@ -88,6 +88,15 @@ class Client(Base):
     nickname = Column(String, nullable=True)            # никнейм для рейтинга (виден другим гостям)
     nickname_changed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Бонусы действуют сутки: таймер запускается, когда на пустом балансе появились
+    # бонусы, и не продлевается новыми начислениями. В срок всё, что осталось, сгорает.
+    bonus_expires_at = Column(DateTime, nullable=True, index=True)
+    bonus_warned = Column(Boolean, default=False)   # предупредили ли, что скоро сгорят
+    # Профиль игрока — его видят другие гости (без имени и телефона)
+    about = Column(String, nullable=True)
+    games = Column(Text, nullable=True)            # JSON-список любимых игр
+    rank = Column(String, nullable=True)           # «Faceit 8», «Легенда 3» — как сам напишет
+    tg_username = Column(String, nullable=True)    # @username в Telegram — для связи тиммейтов
 
 
 def topup_key(client) -> str | None:
@@ -233,6 +242,12 @@ class ReferralReward(Base):
     referred_tg_id = Column(BigInteger, nullable=False)
     amount = Column(Integer, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Второй бонус — когда друг впервые пополнит счёт в клубе ПОСЛЕ регистрации.
+    # base_total — сколько друг пополнил по выгрузке CRM на момент регистрации:
+    # бонус платится, когда по новой выгрузке сумма станет больше.
+    base_total = Column(Float, nullable=True)
+    activated_at = Column(DateTime, nullable=True)
+    activation_amount = Column(Integer, default=0)
 
 
 class CrashRound(Base):
@@ -329,4 +344,195 @@ class RatingAward(Base):
     nickname = Column(String, nullable=True)
     volume = Column(Integer, default=0)
     amount = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class FriendAward(Base):
+    """Призы рейтинга «Самый дружелюбный» (кто привёл больше друзей за месяц).
+    Ключ (месяц, место) — приз выдаётся ровно один раз."""
+    __tablename__ = "friend_awards"
+
+    month = Column(String, primary_key=True)
+    place = Column(Integer, primary_key=True)
+    client_id = Column(Integer, nullable=True)
+    nickname = Column(String, nullable=True)
+    friends = Column(Integer, default=0)
+    amount = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ---------- магазин за бонусы ----------
+
+class ShopProduct(Base):
+    """Товар магазина. Вкусы/варианты — JSON-список [{"id","label","active"}].
+    Цены и наличие админ меняет командами в боте — при обновлении кода они не сбрасываются."""
+    __tablename__ = "shop_products"
+
+    id = Column(String, primary_key=True)          # «redbull», «snickers»…
+    name = Column(String, nullable=False)
+    category = Column(String, nullable=False)      # energy | soda | tea | water | sweets
+    price = Column(Integer, nullable=False)        # цена в бонусах
+    bar_price = Column(Integer, nullable=True)     # цена в баре, ₽ — для справки
+    adult = Column(Boolean, default=False)         # 18+ (энергетики)
+    active = Column(Boolean, default=True)
+    sort = Column(Integer, default=0)
+    variants = Column(Text, nullable=False, default="[]")
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ShopImage(Base):
+    """Фото варианта товара (webp/jpeg), ключ «товар/вариант»."""
+    __tablename__ = "shop_images"
+
+    key = Column(String, primary_key=True)
+    mime = Column(String, default="image/webp")
+    data = Column(LargeBinary, nullable=False)
+    version = Column(String, nullable=True)        # для кэша в браузере
+
+
+class ShopOrder(Base):
+    """Заказ в магазине. Бонусы списываются сразу; администратор выдаёт товар,
+    увидев «живой» экран заказа у гостя, и отмечает выдачу кнопкой в боте."""
+    __tablename__ = "shop_orders"
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, nullable=False, index=True)
+    tg_id = Column(BigInteger, nullable=False, index=True)
+    phone_normalized = Column(String, nullable=True, index=True)
+    items = Column(Text, nullable=False)           # JSON [{"product","variant","name","label","price","qty"}]
+    total = Column(Integer, nullable=False)
+    status = Column(String, nullable=False, default="new", index=True)   # new | issued | cancelled | expired
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    expires_at = Column(DateTime, nullable=True)       # до какого времени можно забрать товар
+    bonus_deadline = Column(DateTime, nullable=True)   # когда сгорели бы бонусы гостя — после этого их не возвращаем
+    issued_at = Column(DateTime, nullable=True)
+    issued_by = Column(String, nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+    cancel_reason = Column(String, nullable=True)
+
+
+# ---------- отметка «был в клубе» ----------
+
+class CheckIn(Base):
+    """Гость отметился в клубе и приложил фото чека. Админ подтверждает в боте —
+    гостю начисляются бонусы. Одна отметка в день (по Москве)."""
+    __tablename__ = "checkins"
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, nullable=False, index=True)
+    tg_id = Column(BigInteger, nullable=False, index=True)
+    day = Column(String, nullable=False, index=True)     # «2026-10-17» по Москве
+    status = Column(String, nullable=False, default="pending")   # pending | approved | rejected
+    photo_file_id = Column(String, nullable=True)        # фото хранится в Telegram, не у нас
+    bonus = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    decided_at = Column(DateTime, nullable=True)
+    decided_by = Column(String, nullable=True)
+
+
+# ---------- прогнозы на киберспорт ----------
+
+class EsportsMatch(Base):
+    """Матч для прогнозов. Коэффициенты берутся у букмекера и обновляются,
+    пока матч не начался; в прогноз гостя записывается коэффициент на момент ставки."""
+    __tablename__ = "esports_matches"
+
+    id = Column(Integer, primary_key=True)
+    source = Column(String, nullable=False, default="manual")   # pinnacle | manual
+    source_id = Column(String, nullable=True, index=True)
+    game = Column(String, nullable=False)                       # CS2, Dota 2…
+    league = Column(String, nullable=True)
+    team1 = Column(String, nullable=False)
+    team2 = Column(String, nullable=False)
+    odds1 = Column(Float, nullable=True)
+    odds2 = Column(Float, nullable=True)
+    start_at = Column(DateTime, nullable=False, index=True)     # UTC
+    status = Column(String, nullable=False, default="open", index=True)  # open | settled | cancelled
+    winner = Column(Integer, nullable=True)                     # 1 | 2
+    odds_updated_at = Column(DateTime, nullable=True)
+    reminded = Column(Integer, default=0)                       # сколько раз напомнили админу подвести итог
+    announced = Column(Boolean, default=False)                  # опубликован в группе клуба
+    created_at = Column(DateTime, default=datetime.utcnow)
+    settled_at = Column(DateTime, nullable=True)
+
+
+class Prediction(Base):
+    __tablename__ = "predictions"
+
+    id = Column(Integer, primary_key=True)
+    match_id = Column(Integer, nullable=False, index=True)
+    client_id = Column(Integer, nullable=False, index=True)
+    tg_id = Column(BigInteger, nullable=False, index=True)
+    pick = Column(Integer, nullable=False)          # 1 | 2
+    stake = Column(Integer, nullable=False)
+    odds = Column(Float, nullable=False)
+    status = Column(String, nullable=False, default="open")   # open | won | lost | refunded
+    payout = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class BonusBurn(Base):
+    """Сгоревшие бонусы (не потрачены за сутки) — для статистики."""
+    __tablename__ = "bonus_burns"
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, nullable=False, index=True)
+    amount = Column(Integer, nullable=False)
+    reason = Column(String, default="expired")      # expired | order_refund_late
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class VisitReward(Base):
+    """Награды серии визитов за месяц (3, 6, 10 подтверждённых чеков) — каждая один раз."""
+    __tablename__ = "visit_rewards"
+
+    client_id = Column(Integer, primary_key=True)
+    month = Column(String, primary_key=True)           # «2026-10»
+    milestone = Column(Integer, primary_key=True)      # 3 | 6 | 10
+    reward = Column(String, nullable=False)            # «50» или «hour»
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class TeamPost(Base):
+    """Заявка «ищу тиммейтов»."""
+    __tablename__ = "team_posts"
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, nullable=False, index=True)
+    game = Column(String, nullable=False)
+    play_at = Column(DateTime, nullable=False, index=True)   # UTC
+    need = Column(Integer, default=1)
+    comment = Column(String, nullable=True)
+    status = Column(String, default="open", index=True)      # open | closed
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class TeamJoin(Base):
+    __tablename__ = "team_joins"
+
+    post_id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ClubEvent(Base):
+    """Событие афиши: турнир, марафон, просмотр матча. Заводится админом в боте."""
+    __tablename__ = "club_events"
+
+    id = Column(Integer, primary_key=True)
+    title = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    starts_at = Column(DateTime, nullable=False, index=True)  # UTC
+    image = Column(LargeBinary, nullable=True)
+    image_ver = Column(String, nullable=True)
+    status = Column(String, default="active", index=True)     # active | deleted
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class EventGoing(Base):
+    __tablename__ = "event_going"
+
+    event_id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, primary_key=True)
+    reminded = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)

@@ -11,7 +11,10 @@
 считалось в браузере, любой гость мог бы подделать результат.
 """
 import asyncio
+import base64
+import binascii
 import contextlib
+import json
 import logging
 import os
 import random
@@ -19,7 +22,7 @@ import re
 import time
 from datetime import datetime, timedelta
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -28,7 +31,7 @@ from sqlalchemy.orm import Session
 
 from .database import Base, engine, get_db, SessionLocal, add_missing_columns
 from .models import (
-    Client, Promotion, Idea, Booking, GamePlay, Withdrawal, PhoneStat,
+    Client, Promotion, Idea, Booking, GamePlay, Withdrawal, PhoneStat, ShopOrder, EsportsMatch, Prediction, BonusBurn,
     get_tier, get_next_tier_info, normalize_phone, lookup_topup, resync_client_topups,
     TIER_LABELS, TIER_THRESHOLDS, TIER_CASHBACK,
 )
@@ -46,6 +49,9 @@ from .legal import POLICY_VERSION, consent_html, policy_html
 from .bot import build_bot_and_dispatcher, GUEST_COMMANDS, battle_notify
 from . import battles
 from . import rating
+from . import shop, checkin, group, bonus_expiry, social
+from .models import TeamPost, ClubEvent, EventGoing
+from . import bot_extra, bot_social
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("colizeum")
@@ -63,20 +69,20 @@ NOTIFY_CHAT_IDS = [
 # Сколько бесплатных попыток даётся на КАЖДУЮ игру за скользящие 24 часа.
 FREE_ATTEMPTS_PER_DAY = int(os.getenv("FREE_ATTEMPTS_PER_DAY", "1"))
 
-# «Кости»: сколько бонусов за каждое выпавшее очко (выпало 4 → 4 × 10 = 40).
+# «Кости»: сколько колизов за каждое выпавшее очко (выпало 4 → 4 × 10 = 40).
 DICE_BONUS_PER_POINT = int(os.getenv("DICE_BONUS_PER_POINT", "10"))
 
 # Бесплатная попытка «Дайс»: реальный шанс = выбранный × этот коэффициент.
 PROBABILITY_HOUSE_FACTOR = float(os.getenv("PROBABILITY_HOUSE_FACTOR", "0.3"))
 
-# Ставки бонусами в «Дайс»: комиссия клуба в процентах, заложенная в
+# Ставки колизами в «Дайс»: комиссия клуба в процентах, заложенная в
 # коэффициент выплаты, и потолок выигрыша за одну ставку.
 BET_HOUSE_EDGE_PERCENT = int(os.getenv("BET_HOUSE_EDGE_PERCENT", "5"))
 BET_MAX_PAYOUT = int(os.getenv("BET_MAX_PAYOUT", "3000"))
 BET_MIN_CHANCE = 1
 BET_MAX_CHANCE = 90
 
-# Игры только на бонусы (Crash, Слот, Больше-меньше). Бесплатных попыток нет.
+# Игры только на колизы (Crash, Слот, Больше-меньше). Бесплатных попыток нет.
 # Комиссия клуба — та же BET_HOUSE_EDGE_PERCENT. Максимальная ставка считается
 # сама так, чтобы выигрыш не превышал BET_MAX_PAYOUT.
 CRASH_MIN_STAKE = int(os.getenv("CRASH_MIN_STAKE", "20"))
@@ -93,13 +99,13 @@ CRASH_MAX_STAKE = max_stake_for(CRASH_MAX_MULTIPLIER)
 SLOTS_MAX_STAKE = max_stake_for(bg.SLOT_MAX_MULT)
 HILO_MAX_STAKE = max_stake_for(bg.hilo_max_coef(BET_HOUSE_EDGE_PERCENT))
 
-# Правила списания бонусов (Railway → Variables):
-#   WITHDRAW_MIN          — меньше этого списать нельзя (чтобы не дёргали по 50 бонусов);
+# Правила списания колизов (Railway → Variables):
+#   WITHDRAW_MIN          — меньше этого списать нельзя (чтобы не дёргали по 50 колизов);
 #   WITHDRAW_LIMIT        — сколько всего можно списать на ОДИН НОМЕР за период —
 #                           считается по номеру, поэтому второй аккаунт с тем же
 #                           номером лимит не обходит;
 #   WITHDRAW_WINDOW_HOURS — длина периода в часах: 24 = сутки, 168 = неделя.
-WITHDRAW_MIN = int(os.getenv("WITHDRAW_MIN", "100"))
+WITHDRAW_MIN = int(os.getenv("WITHDRAW_MIN", "50"))
 WITHDRAW_LIMIT = int(os.getenv("WITHDRAW_LIMIT", "300"))
 WITHDRAW_WINDOW_HOURS = int(os.getenv("WITHDRAW_WINDOW_HOURS", "24"))
 
@@ -162,6 +168,21 @@ def _seed_default_promotions():
 
 _seed_default_promotions()
 
+
+def _seed_shop():
+    db = SessionLocal()
+    try:
+        added = shop.seed_catalog(db)
+        if added:
+            logger.info("Магазин: добавлено товаров из каталога: %s", added)
+    except Exception as e:  # noqa: BLE001 — магазин не должен мешать запуску
+        logger.warning("Магазин: не удалось загрузить каталог: %s", e)
+    finally:
+        db.close()
+
+
+_seed_shop()
+
 app = FastAPI(title="COLIZEUM Mini App API")
 
 app.add_middleware(
@@ -195,7 +216,7 @@ class ProbabilityPayload(BaseModel):
 class BetPayload(BaseModel):
     initData: str
     threshold: int  # 1..90
-    stake: int      # сколько бонусов ставит гость
+    stake: int      # сколько колизов ставит гость
 
 
 class ConsentPayload(BaseModel):
@@ -206,7 +227,7 @@ class ConsentPayload(BaseModel):
 class WithdrawPayload(BaseModel):
     initData: str
     name: str
-    phone: str = ""  # не используется: бонусы уходят только на подтверждённый номер
+    phone: str = ""  # не используется: колизы уходят только на подтверждённый номер
 
 
 class IdeaPayload(BaseModel):
@@ -262,6 +283,8 @@ def consented_client(db: Session, tg_user: dict) -> Client:
     if client is None or client.consent_at is None:
         raise HTTPException(status_code=403, detail="Сначала подтверди согласие на обработку данных")
     client.last_seen_at = datetime.utcnow()
+    if tg_user.get("username") and client.tg_username != tg_user["username"]:
+        client.tg_username = tg_user["username"]
     db.commit()
     return client
 
@@ -302,7 +325,7 @@ def change_balance(db: Session, client: Client, delta: int, require_at_least: in
 
 def require_verified(client: Client):
     """Игры и списание — только с номером, подтверждённым через Telegram.
-    Так один человек не может завести несколько аккаунтов и слить бонусы на один номер."""
+    Так один человек не может завести несколько аккаунтов и слить колизы на один номер."""
     if not client.phone_verified:
         raise HTTPException(status_code=403, detail="Сначала подтверди номер телефона в кабинете")
 
@@ -318,55 +341,59 @@ def window_label() -> str:
 
 
 def recent_withdrawals(db: Session, client: Client, now: datetime):
-    """Заявки на списание за текущий период — по номеру телефона (с любого
-    аккаунта) и по самому аккаунту. Старые заявки без нормализованного номера
-    ловим по номеру как он записан."""
+    """Траты колизов за текущие сутки — заявки на списание И заказы в магазине.
+    Тратить можно ОДИН раз в сутки: либо списание, либо магазин. Считается по номеру
+    телефона (с любого аккаунта) и по самому аккаунту. Отменённые заказы не считаются.
+    Возвращает [(время, сумма, "withdraw" | "shop")] по возрастанию времени."""
     conds = [Withdrawal.tg_id == client.tg_id]
     if client.phone_normalized:
         conds.append(Withdrawal.phone_normalized == client.phone_normalized)
     if client.phone:
         conds.append(Withdrawal.phone == client.phone)
     since = now - timedelta(hours=WITHDRAW_WINDOW_HOURS)
-    return (db.query(Withdrawal.created_at, Withdrawal.amount)
-            .filter(or_(*conds), Withdrawal.created_at >= since)
-            .order_by(Withdrawal.created_at.asc()).all())
+    rows = [(t, int(a), "withdraw") for t, a in db.query(Withdrawal.created_at, Withdrawal.amount)
+            .filter(or_(*conds), Withdrawal.created_at >= since).all()]
+    oconds = [ShopOrder.tg_id == client.tg_id]
+    if client.phone_normalized:
+        oconds.append(ShopOrder.phone_normalized == client.phone_normalized)
+    rows += [(t, int(a), "shop") for t, a in db.query(ShopOrder.created_at, ShopOrder.total)
+             .filter(or_(*oconds), ShopOrder.created_at >= since,
+                     ShopOrder.status.notin_(["cancelled", "expired"])).all()]
+    return sorted(rows, key=lambda r: r[0])
 
 
 def withdraw_info(db: Session, client: Client) -> dict:
+    """Можно ли сейчас тратить колизы. Одна трата в сутки — списание (от WITHDRAW_MIN
+    до WITHDRAW_LIMIT) ИЛИ заказ в магазине (до WITHDRAW_LIMIT)."""
     now = datetime.utcnow()
     balance = client.balance or 0
     rows = recent_withdrawals(db, client, now) if client.phone_verified else []
-    used = sum(a for _, a in rows)
-    remaining = max(0, WITHDRAW_LIMIT - used)
-
-    next_in = None
-    if remaining < WITHDRAW_MIN and rows:
-        # Когда старые заявки «выйдут» из периода и лимит освободится до минимума.
-        left = used
-        for created_at, amount in rows:
-            left -= amount
-            if WITHDRAW_LIMIT - left >= WITHDRAW_MIN:
-                next_in = format_wait(created_at + timedelta(hours=WITHDRAW_WINDOW_HOURS) - now)
-                break
+    used = sum(a for _, a, _ in rows)
+    spent_kind = rows[-1][2] if rows else None
+    next_in = format_wait(rows[-1][0] + timedelta(hours=WITHDRAW_WINDOW_HOURS) - now) if rows else None
+    remaining = 0 if rows else WITHDRAW_LIMIT
 
     reason = None
     if not client.phone_verified:
-        reason = "Подтверди номер телефона, чтобы списывать бонусы"
-    elif remaining < WITHDRAW_MIN:
-        reason = (f"Лимит {WITHDRAW_LIMIT} бонусов {window_label()} на номер исчерпан"
-                  + (f" — следующее списание через {next_in}" if next_in else ""))
+        reason = "Подтверди номер телефона, чтобы списывать колизы"
+    elif rows:
+        what = "уже купил(а) в магазине" if spent_kind == "shop" else "уже списал(а) колизы"
+        reason = (f"Сегодня ты {what}. Тратить колизы можно раз {window_label()}: либо списание, либо магазин"
+                  + (f" — следующий раз через {next_in}" if next_in else ""))
     elif balance < WITHDRAW_MIN:
-        reason = f"Списать можно от {WITHDRAW_MIN} бонусов"
+        reason = f"Списать можно от {WITHDRAW_MIN} колизов"
 
     return {
         "available": reason is None,
         "reason": reason,
-        "amount": min(balance, remaining),
+        "amount": min(balance, WITHDRAW_LIMIT),
         "min": WITHDRAW_MIN,
         "limit": WITHDRAW_LIMIT,
         "used": used,
         "remaining": remaining,
         "window_label": window_label(),
+        "next_free_in": next_in,
+        "spent_kind": spent_kind,
     }
 
 
@@ -393,14 +420,24 @@ def client_to_dict(db: Session, client: Client) -> dict:
         "phone": client.phone if client.phone_verified else None,
         "phone_verified": bool(client.phone_verified),
         "balance": client.balance or 0,
+        "bonus_expires_at": (lambda d: d.isoformat() + "Z" if d else None)(bonus_expiry.deadline_for(client)),
+        "bonus_ttl_hours": bonus_expiry.BONUS_TTL_HOURS,
         "monthly_topup": topup,
         "crm_found": crm_found,
         "withdraw": withdraw_info(db, client),
         "referral": {
             "link": referrals.referral_link(client.id),
             "bonus": referrals.REFERRAL_BONUS,
+            "activation_bonus": referrals.REFERRAL_ACTIVATION_BONUS,
             "invited": referrals.invited_count(db, client),
+            "activated": referrals.activated_count(db, client),
         },
+        "checkin": checkin.view(db, client),
+        "visits": social.visit_progress(db, client),
+        "profile": {"about": client.about or "", "games": social.games_of(client), "rank": client.rank or "",
+                    "all_games": social.GAMES},
+        "shop_active_orders": db.query(func.count(ShopOrder.id)).filter(
+            ShopOrder.client_id == client.id, ShopOrder.status == "new").scalar() or 0,
         "tier": tier,
         "tier_label": TIER_LABELS[tier],
         "cashback_percent": TIER_CASHBACK[tier],
@@ -470,7 +507,7 @@ def api_me(payload: InitDataPayload, db: Session = Depends(get_db)):
 def api_consent(payload: ConsentPayload, db: Session = Depends(get_db)):
     """Гость поставил галочку «Согласен» — фиксируем дату и редакцию политики.
     Если гость пришёл по ссылке друга и он НОВЫЙ — запоминаем, кто пригласил
-    (бонус пригласившему начислится, когда гость подтвердит номер)."""
+    (колиз пригласившему начислится, когда гость подтвердит номер)."""
     tg_user = verify(payload.initData)
     is_new = db.query(Client.id).filter(Client.tg_id == tg_user["id"]).first() is None
     client = get_or_create_client(db, tg_user)
@@ -566,7 +603,7 @@ def api_probability(payload: ProbabilityPayload, db: Session = Depends(get_db)):
 
 @app.post("/api/probability/bet")
 def api_probability_bet(payload: BetPayload, db: Session = Depends(get_db)):
-    """«Дайс», ставка бонусами. Без лимита попыток — ограничен только балансом."""
+    """«Дайс», ставка колизами. Без лимита попыток — ограничен только балансом."""
     tg_user = verify(payload.initData)
     client = consented_client(db, tg_user)
     require_verified(client)
@@ -576,20 +613,20 @@ def api_probability_bet(payload: BetPayload, db: Session = Depends(get_db)):
     if not (BET_MIN_CHANCE <= chance <= BET_MAX_CHANCE):
         raise HTTPException(status_code=400, detail=f"Шанс — от {BET_MIN_CHANCE} до {BET_MAX_CHANCE}%")
     if stake < 1:
-        raise HTTPException(status_code=400, detail="Ставка — минимум 1 бонус")
+        raise HTTPException(status_code=400, detail="Ставка — минимум 1 колиз")
 
     payout_if_win = bet_payout(stake, chance, BET_HOUSE_EDGE_PERCENT)
     if payout_if_win > BET_MAX_PAYOUT:
         raise HTTPException(
             status_code=400,
-            detail=f"Максимальный выигрыш за одну ставку — {BET_MAX_PAYOUT} бонусов. "
+            detail=f"Максимальный выигрыш за одну ставку — {BET_MAX_PAYOUT} колизов. "
                    f"Уменьши ставку или повысь шанс.",
         )
 
-    # Сначала списываем ставку (атомарно — если бонусов не хватает, ничего не спишется).
+    # Сначала списываем ставку (атомарно — если колизов не хватает, ничего не спишется).
     if not change_balance(db, client, -stake, require_at_least=stake):
         db.rollback()
-        raise HTTPException(status_code=400, detail="Недостаточно бонусов на балансе")
+        raise HTTPException(status_code=400, detail="Недостаточно колизов на балансе")
 
     rolled, win = roll_bet(chance)
     payout = payout_if_win if win else 0
@@ -599,6 +636,8 @@ def api_probability_bet(payload: BetPayload, db: Session = Depends(get_db)):
     db.add(GamePlay(tg_id=client.tg_id, game="probability", mode="bet", stake=stake, payout=payout))
     db.commit()
     db.refresh(client)
+    if payout:
+        note_big_win(db, client.tg_id, "probability", stake, payout)
 
     return {
         "win": win,
@@ -610,7 +649,7 @@ def api_probability_bet(payload: BetPayload, db: Session = Depends(get_db)):
     }
 
 
-# ---------- игры только на бонусы: общее ----------
+# ---------- игры только на колизы: общее ----------
 
 def credit_by_tg(db: Session, tg_id: int, amount: int):
     if amount:
@@ -621,12 +660,20 @@ def credit_by_tg(db: Session, tg_id: int, amount: int):
 def take_stake(db: Session, client: Client, stake: int, min_stake: int, max_stake: int):
     """Проверяет ставку и атомарно списывает её с баланса."""
     if stake < min_stake:
-        raise HTTPException(status_code=400, detail=f"Минимальная ставка — {min_stake} бонусов")
+        raise HTTPException(status_code=400, detail=f"Минимальная ставка — {min_stake} колизов")
     if stake > max_stake:
-        raise HTTPException(status_code=400, detail=f"Максимальная ставка — {max_stake} бонусов")
+        raise HTTPException(status_code=400, detail=f"Максимальная ставка — {max_stake} колизов")
     if not change_balance(db, client, -stake, require_at_least=stake):
         db.rollback()
-        raise HTTPException(status_code=400, detail="Недостаточно бонусов на балансе")
+        raise HTTPException(status_code=400, detail="Недостаточно колизов на балансе")
+
+
+def note_big_win(db: Session, tg_id: int, game: str, stake: int, payout: int, mult: float | None = None):
+    """Крупный выигрыш — в очередь на пост в группу клуба (если включено)."""
+    if not group.enabled() or payout < group.BIG_WIN_MIN:
+        return
+    nick = db.query(Client.nickname).filter(Client.tg_id == tg_id).scalar()
+    group.big_win(nick, game, stake, payout, mult)
 
 
 def current_balance(db: Session, tg_id: int) -> int:
@@ -666,6 +713,8 @@ def settle_crash(db: Session, rnd: CrashRound, cashout: bool = False) -> CrashRo
         db.add(GamePlay(tg_id=rnd.tg_id, game="crash", mode="bet", stake=rnd.stake, payout=payout))
     db.commit()
     db.refresh(rnd)
+    if updated == 1 and payout:
+        note_big_win(db, rnd.tg_id, "crash", rnd.stake, payout, mult)
     return rnd
 
 
@@ -768,6 +817,7 @@ def api_slots_spin(payload: StakePayload, db: Session = Depends(get_db)):
     credit_by_tg(db, client.tg_id, payout)
     db.add(GamePlay(tg_id=client.tg_id, game="slots", mode="bet", stake=payload.stake, payout=payout))
     db.commit()
+    note_big_win(db, client.tg_id, "slots", payload.stake, payout, mult)
     return {"reels": reels, "mult": mult, "label": label, "positions": positions,
             "payout": payout, "net": payout - payload.stake, "balance": current_balance(db, client.tg_id)}
 
@@ -840,6 +890,8 @@ def api_hilo_guess(payload: HiloGuessPayload, db: Session = Depends(get_db)):
         db.add(GamePlay(tg_id=rnd.tg_id, game="hilo", mode="bet", stake=rnd.stake, payout=payout))
     db.commit()
     db.refresh(rnd)
+    if updated == 1 and payout:
+        note_big_win(db, rnd.tg_id, "hilo", rnd.stake, payout, coef)
     return hilo_round_dict(db, rnd)
 
 
@@ -904,7 +956,7 @@ async def api_battle_invite(payload: BattleInvitePayload, db: Session = Depends(
     b, target, created = run_battle(battles.invite, db, me, payload.phone)
     if target is not None and created:
         await notify_bot(target.id, f"⚔️ {battles.first_name(me)} вызывает тебя на батл в COLIZEUM!\n"
-                                    "Сыграете в 21, Crash-дуэль или покер на бонусы.", b.id, invite=True)
+                                    "Сыграете в 21, Crash-дуэль или покер на колизы.", b.id, invite=True)
     return {"ok": True, "battle_id": b.id if (not created and b.status == "active") else None,
             "message": "Если этот номер подтверждён в боте, человеку придёт вызов. "
                        "Как только он примет — батл появится в списке."}
@@ -946,8 +998,8 @@ async def api_battle_offer(payload: BattleOfferPayload, db: Session = Depends(ge
     b, changed = run_battle(battles.make_offer, db, me, payload.battle_id, payload.game, payload.stake)
     idx = battles.player_index(b, me)
     opp_id = b.invitee_id if idx == 0 else b.inviter_id
-    what = (f"покер, стек {payload.stake} бонусов" if payload.game == "poker"
-            else f"{battles.GAMES[payload.game]} на {payload.stake} бонусов")
+    what = (f"покер, стек {payload.stake} колизов" if payload.game == "poker"
+            else f"{battles.GAMES[payload.game]} на {payload.stake} колизов")
     if changed:
         await notify_bot(opp_id, f"⚔️ {battles.first_name(me)} предлагает: {what}. Принять?", b.id)
     return run_battle(battles.battle_view, db, b, me)
@@ -996,7 +1048,7 @@ class NicknamePayload(BaseModel):
 
 @app.post("/api/nickname")
 def api_nickname(payload: NicknamePayload, db: Session = Depends(get_db)):
-    """Гость задаёт никнейм. Если номер уже подтверждён — сразу приветственный бонус."""
+    """Гость задаёт никнейм. Если номер уже подтверждён — сразу приветственный колиз."""
     client = consented_client(db, verify(payload.initData))
     try:
         with battles.LOCK:            # тот же замок — чтобы два гостя одновременно не заняли один ник
@@ -1024,6 +1076,8 @@ class ClientErrorPayload(BaseModel):
     tg_version: str = ""
     platform: str = ""
     has_init: bool = False
+    has_hash: bool = False
+    extra: str = ""
 
 
 _client_errors_seen: dict = {}
@@ -1048,16 +1102,21 @@ async def api_client_error(p: ClientErrorPayload):
         hint = ""
         if chrome and int(chrome.group(1)) < 80:
             hint = "\nПохоже, устарел браузер телефона — гостю нужно обновить «Android System WebView» и Chrome в Google Play."
-        elif not p.has_init:
-            hint = "\nСтраница открыта не из Telegram — гостю нужно открыть кабинет кнопкой в боте (/start)."
+        elif "не загрузился" in (p.tg_version or ""):
+            hint = ("\nУ гостя не открывается сайт telegram.org (оператор или VPN). Кабинет должен работать "
+                    "через запасной мост; если не работает — пусть попробует выключить VPN или сменить сеть (Wi-Fi/мобильный).")
+        elif not p.has_init and not p.has_hash:
+            hint = ("\nTelegram не передал кабинету данные гостя. Пусть гость отправит боту /start и нажмёт "
+                    "«Открыть личный кабинет» в НОВОМ сообщении — в эту кнопку вшит его личный пропуск.")
         await notify_admins(f"⚠️ У гостя не открылся кабинет\nЧто случилось: {p.kind} — {msg or '—'}\n"
-                            f"Telegram {p.tg_version or '?'} ({p.platform or '?'}), {browser}{hint}")
+                            f"Telegram {p.tg_version or '?'} ({p.platform or '?'}), {browser}{hint}\n"
+                            f"Тех. данные: {p.extra[:300] or '—'}")
     return {"ok": True}
 
 
 @app.post("/api/withdraw")
 async def api_withdraw(payload: WithdrawPayload, db: Session = Depends(get_db)):
-    """Заявка на списание бонусов. Бонусы уходят только на номер, подтверждённый
+    """Заявка на списание колизов. Колизы уходят только на номер, подтверждённый
     через Telegram; действуют минимум за раз и лимит на один номер за период.
     Сумма сразу снимается с баланса (чтобы нельзя было отправить заявку дважды),
     админ получает сообщение с данными для проверки и начисляет бонусы в CRM."""
@@ -1102,17 +1161,17 @@ async def api_withdraw(payload: WithdrawPayload, db: Session = Depends(get_db)):
 
     tg_line = f"@{username}" if username else f"id {client.tg_id}"
     await notify_admins(
-        "💸 Заявка на списание бонусов\n"
+        "💸 Заявка на списание колизов\n"
         f"Имя: {name}\n"
         f"Телефон (подтверждён Telegram): {phone}\n"
-        f"Сумма: {amount} бонусов (по номеру {window_label()}: {info['used'] + amount} из {WITHDRAW_LIMIT})\n"
+        f"Сумма: {amount} колизов (одна трата {window_label()} — магазин по этому номеру теперь закрыт до завтра)\n"
         f"Telegram: {tg_line}\n\n"
         "Проверка:\n"
         f"• аккаунту в приложении: {days} дн.\n"
-        f"• сыграно игр: {plays}, выиграно всего: {won} бонусов\n"
+        f"• сыграно игр: {plays}, выиграно всего: {won} колизов\n"
         f"• номер в CRM клуба: {crm_line}\n\n"
         "Начисли бонусы гостю в CRM. Если заявку отклоняешь — "
-        f"верни бонусы в приложение: /add_bonus {phone} {amount}"
+        f"верни колизы в приложение: /add_bonus {phone} {amount}"
     )
 
     return {"ok": True, "amount": amount, "balance": client.balance}
@@ -1165,6 +1224,287 @@ async def api_booking(payload: BookingPayload, db: Session = Depends(get_db)):
         lines.append(f"Пожелания: {booking.notes}")
     await notify_admins("\n".join(lines))
     return {"ok": True}
+
+
+
+# ---------- магазин за колизы ----------
+
+class ShopOrderPayload(BaseModel):
+    initData: str
+    items: list[dict]
+
+
+class OrderIdPayload(BaseModel):
+    initData: str
+    order_id: int
+
+
+@app.get("/api/shop/catalog")
+def api_shop_catalog(db: Session = Depends(get_db)):
+    return shop.catalog_view(db)
+
+
+@app.get("/api/shop/img/{product_id}/{variant_id}")
+def api_shop_img(product_id: str, variant_id: str, db: Session = Depends(get_db)):
+    img = shop.image(db, product_id, variant_id)
+    if img is None:
+        raise HTTPException(status_code=404, detail="Нет фото")
+    return Response(content=img.data, media_type=img.mime or "image/webp",
+                    headers={"Cache-Control": "public, max-age=604800"})
+
+
+def shop_orders_view(db: Session, client: Client) -> list[dict]:
+    rows = (db.query(ShopOrder).filter(ShopOrder.client_id == client.id)
+            .order_by(ShopOrder.id.desc()).limit(10).all())
+    return [shop.order_view(o, client.nickname) for o in rows]
+
+
+@app.post("/api/shop/order")
+async def api_shop_order(payload: ShopOrderPayload, db: Session = Depends(get_db)):
+    """Покупка колизами. Общий лимит трат с заявками на списание — под тем же замком."""
+    client = consented_client(db, verify(payload.initData))
+    require_verified(client)
+    try:
+        items, total = shop.build_order(db, payload.items)
+    except shop.ShopError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    async with _withdraw_lock:
+        info = withdraw_info(db, client)
+        if info["spent_kind"]:
+            raise HTTPException(status_code=400, detail=info["reason"])
+        if total > WITHDRAW_LIMIT:
+            raise HTTPException(status_code=400, detail=(
+                f"За один раз — не больше {WITHDRAW_LIMIT} колизов, а в корзине {total}. Убери что-нибудь из корзины."))
+        db.refresh(client)
+        deadline = bonus_expiry.deadline_for(client)
+        if not change_balance(db, client, -total, require_at_least=total):
+            db.rollback()
+            raise HTTPException(status_code=400, detail="Недостаточно колизов на балансе")
+        now = datetime.utcnow()
+        order = ShopOrder(client_id=client.id, tg_id=client.tg_id, phone_normalized=client.phone_normalized,
+                          items=json.dumps(items, ensure_ascii=False), total=total, status="new",
+                          created_at=now, expires_at=now + shop.ORDER_TTL, bonus_deadline=deadline)
+        db.add(order)
+        db.commit()
+        db.refresh(order)
+        db.refresh(client)
+    if _bot_instance is not None:
+        try:
+            await bot_extra.shop_notify(_bot_instance, order, client, items)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Магазин: не удалось уведомить админов: %s", e)
+    return {"order": shop.order_view(order, client.nickname), "balance": client.balance,
+            "withdraw": withdraw_info(db, client)}
+
+
+@app.post("/api/shop/orders")
+def api_shop_orders(payload: InitDataPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    return {"orders": shop_orders_view(db, client)}
+
+
+@app.post("/api/shop/order_state")
+def api_shop_order_state(payload: OrderIdPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    o = db.get(ShopOrder, payload.order_id)
+    if o is None or o.client_id != client.id:
+        raise HTTPException(status_code=404, detail="Заказ не найден")
+    return shop.order_view(o, client.nickname)
+
+
+@app.post("/api/shop/cancel")
+async def api_shop_cancel(payload: OrderIdPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    r = shop.cancel_order(db, payload.order_id, "отменил гость", client_id=client.id)
+    if r is None:
+        raise HTTPException(status_code=400, detail="Этот заказ уже выдан или отменён")
+    o, refunded = r
+    await notify_admins(f"↩️ Гость отменил заказ №{o.id} — не выдавай его.")
+    db.refresh(client)
+    return {"order": shop.order_view(o, client.nickname), "balance": client.balance, "refunded": refunded,
+            "withdraw": withdraw_info(db, client)}
+
+
+# ---------- отметка «Я в клубе» с чеком ----------
+
+class CheckInPayload(BaseModel):
+    initData: str
+    photo: str      # data:image/jpeg;base64,…
+
+
+@app.post("/api/checkin")
+async def api_checkin(payload: CheckInPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    try:
+        checkin.can_submit(db, client)
+    except checkin.CheckInError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    raw = payload.photo.split(",", 1)[-1]
+    try:
+        photo = base64.b64decode(raw, validate=False)
+    except (ValueError, binascii.Error):
+        raise HTTPException(status_code=400, detail="Не получилось прочитать фото — попробуй другое")
+    if len(photo) < 2000 or len(photo) > 6_000_000:
+        raise HTTPException(status_code=400, detail="Фото не подошло — сфотографируй чек ещё раз")
+    if _bot_instance is None:
+        raise HTTPException(status_code=503, detail="Сейчас не получается отправить чек — пришли фото чека боту в чат")
+    c = checkin.create(db, client)
+    try:
+        file_id = await bot_extra.checkin_notify(_bot_instance, c, client, photo=photo)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Чек не отправлен админам: %s", e)
+        file_id = None
+    if not file_id:
+        db.delete(c)
+        db.commit()
+        raise HTTPException(status_code=503, detail="Не получилось отправить чек администратору — пришли фото чека боту в чат")
+    c.photo_file_id = file_id
+    db.commit()
+    return checkin.view(db, client)
+
+
+@app.post("/api/rating/friendly")
+def api_rating_friendly(payload: InitDataPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    return rating.friendly_view(db, client)
+
+
+# ---------- профиль игрока ----------
+
+class ProfilePayload(BaseModel):
+    initData: str
+    about: str = ""
+    games: list[str] = []
+    rank: str = ""
+
+
+class NickPayload(BaseModel):
+    initData: str
+    nickname: str
+
+
+@app.post("/api/profile/save")
+def api_profile_save(payload: ProfilePayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    try:
+        social.save_profile(db, client, payload.about, payload.games, payload.rank)
+    except social.SocialError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return social.profile_view(db, client, me=True)
+
+
+@app.post("/api/profile/view")
+def api_profile_view(payload: NickPayload, db: Session = Depends(get_db)):
+    consented_client(db, verify(payload.initData))
+    c = social.find_by_nickname(db, payload.nickname)
+    if c is None:
+        raise HTTPException(status_code=404, detail="Игрок не найден")
+    return social.profile_view(db, c)
+
+
+# ---------- тиммейты ----------
+
+class TeamCreatePayload(BaseModel):
+    initData: str
+    game: str
+    day: int = 0          # 0 — сегодня, 1 — завтра…
+    hour: int
+    minute: int = 0
+    need: int = 1
+    comment: str = ""
+
+
+class TeamIdPayload(BaseModel):
+    initData: str
+    post_id: int
+
+
+@app.post("/api/team/list")
+def api_team_list(payload: InitDataPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    return {"posts": social.team_list(db, client), "games": social.GAMES}
+
+
+@app.post("/api/team/create")
+async def api_team_create(payload: TeamCreatePayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    require_verified(client)
+    if not client.nickname:
+        raise HTTPException(status_code=400, detail="Сначала придумай никнейм на главной")
+    if not (0 <= payload.day <= 13 and 0 <= payload.hour <= 23 and 0 <= payload.minute <= 59):
+        raise HTTPException(status_code=400, detail="Неверное время")
+    msk_today = (datetime.utcnow() + timedelta(hours=3)).date()
+    d = msk_today + timedelta(days=payload.day)
+    play_at = datetime(d.year, d.month, d.day, payload.hour, payload.minute) - timedelta(hours=3)
+    try:
+        post = social.team_create(db, client, payload.game, play_at, payload.need, payload.comment)
+    except social.SocialError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if _bot_instance is not None:
+        await bot_social.announce_team(_bot_instance, post, client)
+    return {"posts": social.team_list(db, client)}
+
+
+@app.post("/api/team/join")
+async def api_team_join(payload: TeamIdPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    require_verified(client)
+    if not client.nickname:
+        raise HTTPException(status_code=400, detail="Сначала придумай никнейм на главной")
+    try:
+        post = social.team_join(db, client, payload.post_id)
+    except social.SocialError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    author = db.get(Client, post.client_id)
+    if _bot_instance is not None and author is not None:
+        await bot_social.team_joined(_bot_instance, post, author, client)
+    return {"posts": social.team_list(db, client)}
+
+
+@app.post("/api/team/close")
+def api_team_close(payload: TeamIdPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    db.query(TeamPost).filter(TeamPost.id == payload.post_id, TeamPost.client_id == client.id).update(
+        {TeamPost.status: "closed"}, synchronize_session=False)
+    db.commit()
+    return {"posts": social.team_list(db, client)}
+
+
+# ---------- афиша ----------
+
+class EventGoPayload(BaseModel):
+    initData: str
+    event_id: int
+    going: bool = True
+
+
+@app.post("/api/events")
+def api_events(payload: InitDataPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    return {"events": social.events_list(db, client)}
+
+
+@app.post("/api/event/going")
+def api_event_going(payload: EventGoPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    ev = db.get(ClubEvent, payload.event_id)
+    if ev is None or ev.status != "active":
+        raise HTTPException(status_code=404, detail="Событие не найдено")
+    row = db.get(EventGoing, (ev.id, client.id))
+    if payload.going and row is None:
+        db.add(EventGoing(event_id=ev.id, client_id=client.id))
+    elif not payload.going and row is not None:
+        db.delete(row)
+    db.commit()
+    return {"events": social.events_list(db, client)}
+
+
+@app.get("/api/event/img/{event_id}")
+def api_event_img(event_id: int, db: Session = Depends(get_db)):
+    ev = db.get(ClubEvent, event_id)
+    if ev is None or not ev.image:
+        raise HTTPException(status_code=404, detail="Нет фото")
+    return Response(content=ev.image, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=604800"})
 
 
 # ---------- админ ----------
@@ -1251,6 +1591,11 @@ async def battle_sweeper():
         finally:
             db.close()
         await settle_rating()
+        try:
+            await expiry_tick()
+            await group_tick()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Фоновые задачи: %s", e)
 
 
 _rating_checked_month = None
@@ -1265,27 +1610,119 @@ async def settle_rating():
     db = SessionLocal()
     try:
         awarded = rating.settle_due(db)
+        friendly = rating.settle_friendly_due(db)
         _rating_checked_month = current
     except Exception as e:  # noqa: BLE001
         logger.warning("Итоги рейтинга: %s", e)
         return
     finally:
         db.close()
-    for a in awarded:
-        place = {1: "🥇 1 место", 2: "🥈 2 место", 3: "🥉 3 место"}.get(a["place"], f"{a['place']} место")
+    medal = {1: "🥇", 2: "🥈", 3: "🥉"}
+    # Призы — на карту гостя в CRM клуба (в приложении бонусы сгорают за сутки,
+    # а на карте нет — так приз сохраняет свою ценность). Админу — список к начислению.
+    for a in awarded + friendly:
+        what = (f"🤝 Ты — самый дружелюбный гость COLIZEUM за {a['month'].lower()}! Привёл(а) друзей: {a['friends']}."
+                if "friends" in a else
+                f"🏆 Итоги рейтинга COLIZEUM за {a['month'].lower()}: {a['place']} место! Твой оборот — {a['volume']:,} колизов.")
         if _bot_instance is not None:
             try:
                 await _bot_instance.send_message(
-                    a["tg_id"], f"🏆 Итоги рейтинга COLIZEUM за {a['month'].lower()}: {place}!\n"
-                                f"Твой оборот — {a['volume']:,} бонусов. На баланс зачислено +{a['amount']:,} бонусов."
-                                .replace(",", " "))
+                    a["tg_id"], (what + f"\nПриз {a['amount']:,} бонусов администратор зачислит на твою карту гостя клуба — "
+                                        "там бонусы не сгорают.").replace(",", " "))
             except Exception as e:  # noqa: BLE001
-                logger.info("Не удалось поздравить победителя %s: %s", a["tg_id"], e)
-    if awarded:
-        lines = [f"🏆 Итоги рейтинга за {awarded[0]['month'].lower()} — призы начислены автоматически:"]
-        lines += [f"{a['place']}. {a['nickname']} — оборот {a['volume']:,}, приз {a['amount']:,}".replace(",", " ")
-                  for a in awarded]
+                logger.info("Не удалось поздравить %s: %s", a["tg_id"], e)
+    if awarded or friendly:
+        lines = ["🏆 Итоги месяца — начисли призы в CRM на карту гостя:"]
+        lines += [f"{a['place']}. {a['nickname']} ({a.get('phone') or 'номер не подтверждён'}) — оборот {a['volume']:,} → {a['amount']:,} бонусов на карту"
+                  .replace(",", " ") for a in awarded]
+        lines += [f"🤝 {a['nickname']} ({a.get('phone') or '—'}) — привёл(а) {a['friends']} друзей → {a['amount']:,} бонусов на карту"
+                  .replace(",", " ") for a in friendly]
         await notify_admins("\n".join(lines))
+        glines = [f"🏆 Итоги месяца в COLIZEUM — {(awarded or friendly)[0]['month'].lower()}", ""]
+        glines += [f"{medal.get(a['place'], a['place'])} {a['nickname']} — оборот {a['volume']:,}, приз {a['amount']:,}"
+                   .replace(",", " ") for a in awarded]
+        glines += [f"🤝 Самый дружелюбный: {a['nickname']} — привёл(а) {a['friends']} друзей, приз {a['amount']:,}"
+                   .replace(",", " ") for a in friendly if a["place"] == 1]
+        glines += ["", "Новый месяц — новый рейтинг. Залетай 👇"]
+        group.post("\n".join(glines))
+
+
+# ---------- сгорание колизов и просроченные заказы ----------
+
+def _close_predictions():
+    """Прогнозы отключены: открытые ставки (если были) возвращаем один раз при запуске."""
+    db = SessionLocal()
+    try:
+        for p in db.query(Prediction).filter(Prediction.status == "open").all():
+            p.status, p.payout = "refunded", p.stake
+            db.query(Client).filter(Client.id == p.client_id).update(
+                {Client.balance: func.coalesce(Client.balance, 0) + p.stake}, synchronize_session=False)
+        db.query(EsportsMatch).filter(EsportsMatch.status == "open").update(
+            {EsportsMatch.status: "cancelled", EsportsMatch.settled_at: datetime.utcnow()}, synchronize_session=False)
+        db.commit()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Закрытие прогнозов: %s", e)
+        db.rollback()
+    finally:
+        db.close()
+
+
+_close_predictions()
+
+
+async def expiry_tick():
+    db = SessionLocal()
+    try:
+        warn, burned = bonus_expiry.tick(db)
+        expired = shop.expire_due(db)
+        expired_info = [(o.id, o.tg_id, o.total, refunded) for o, refunded in expired]
+    finally:
+        db.close()
+    if _bot_instance is None:
+        return
+    db = SessionLocal()
+    try:
+        reminders = social.event_reminders(db)
+    finally:
+        db.close()
+    for tg_id, title, when in reminders:
+        await bot_extra.tell(_bot_instance, tg_id, f"Напоминаем: «{title}» в COLIZEUM — {when}. Ждём тебя!", cabinet=True)
+    for w in warn:
+        left = w["expires_at"] - datetime.utcnow()
+        await bot_extra.tell(_bot_instance, w["tg_id"],
+                             f"⏳ Через {format_wait(left)} сгорят {w['amount']:,} колизов на балансе COLIZEUM.\n"
+                             f"Колизы действуют сутки с момента начисления. Успей потратить: купить напиток или батончик "
+                             f"в магазине приложения или списать до {WITHDRAW_LIMIT} колизов на карту гостя.".replace(",", " "),
+                             cabinet=True)
+    for oid, tg_id, total, refunded in expired_info:
+        await bot_extra.tell(_bot_instance, tg_id, f"Заказ №{oid} не забрали вовремя — он отменён. " + (
+            f"{total} колизов вернулись на баланс." if refunded else "Срок действия этих колизов уже истёк — они сгорели."))
+        await notify_admins(f"⌛ Заказ №{oid} просрочен и отменён — не выдавай его.")
+
+
+_weekly_key = None
+
+
+async def group_tick():
+    """Публикует накопившиеся посты в группу клуба и еженедельный рейтинг."""
+    global _weekly_key
+    if not group.enabled() or _bot_instance is None:
+        group.drain()
+        return
+    key = group.weekly_due(last_key=_weekly_key)
+    if key:
+        _weekly_key = key
+        db = SessionLocal()
+        try:
+            mk = rating.month_key(datetime.utcnow())
+            text = group.weekly_text(rating.month_title(mk), rating.leaderboard(db, mk), rating.friendly_board(db, mk))
+        finally:
+            db.close()
+        if text:
+            group.post(text)
+    for item in group.drain():
+        await bot_extra.post_to_group(_bot_instance, item["text"], item.get("button", True))
+        await asyncio.sleep(1)
 
 
 @app.on_event("startup")

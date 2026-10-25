@@ -1,22 +1,29 @@
 """
-Никнеймы, приветственные бонусы и рейтинг месяца.
+Никнеймы, приветственные колизы и рейтинг месяца.
 
 Рейтинг — по ОБОРОТУ за календарный месяц (по московскому времени):
-    выигрыши в бесплатных играх + все ставки в играх на бонусы и в батлах.
-Пример: гость выиграл бесплатно 80 бонусов и прокрутил их ставками на
+    выигрыши в бесплатных играх + все ставки в играх на колизы и в батлах.
+Пример: гость выиграл бесплатно 80 колизов и прокрутил их ставками на
 2 000 — его оборот 2 080, даже если в итоге всё проиграл.
 
 В рейтинге участвуют гости с подтверждённым номером и никнеймом. Другие
 видят только никнейм — ни имени, ни телефона.
 
 Итоги подводятся автоматически: в первые минуты нового месяца победители
-прошлого месяца получают призы на баланс и сообщение от бота. Приз за
-месяц выдаётся ровно один раз (это хранится в базе).
+прошлого месяца получают сообщение от бота, а админ — список, кому начислить
+приз на карту гостя в CRM (в приложении бонусы сгорают за сутки, на карте — нет).
+Итоги за месяц подводятся ровно один раз (это хранится в базе).
 
 Настройки (Railway → Variables):
   WELCOME_BONUS  — подарок за регистрацию (по умолчанию 100);
   RATING_PRIZES  — призы за места через запятую (по умолчанию «3000» — только 1 место;
                    например «3000,1500,500» — призы за 1, 2 и 3 места).
+  FRIENDLY_PRIZES — призы рейтинга «Самый дружелюбный» (по умолчанию «1000»; «0» — без приза).
+
+Рейтинг «Самый дружелюбный» — кто за месяц привёл больше друзей. Друг
+засчитывается, только когда он реально зарегистрировался: принял правила
+и подтвердил СВОЙ номер через Telegram (тот же момент, когда пригласившему
+приходят +50 колизов). Один номер телефона засчитывается один раз.
 """
 import os
 import re
@@ -25,11 +32,12 @@ from datetime import datetime, timedelta
 from sqlalchemy import case, func
 from sqlalchemy.exc import IntegrityError
 
-from .models import Client, GamePlay, RatingAward, WelcomeBonus
+from .models import Client, GamePlay, RatingAward, WelcomeBonus, ReferralReward, FriendAward
 
 WELCOME_BONUS = int(os.getenv("WELCOME_BONUS", "100"))
 RATING_PRIZES = [int(x) for x in os.getenv("RATING_PRIZES", "3000").replace(" ", "").split(",") if x]
 RATING_FIRST_MONTH = os.getenv("RATING_FIRST_MONTH", "2026-10")   # раньше этого месяца призы не выдаются
+FRIENDLY_PRIZES = [int(x) for x in os.getenv("FRIENDLY_PRIZES", "1000").replace(" ", "").split(",") if x and x != "0"]
 MSK = timedelta(hours=3)
 NICK_MIN, NICK_MAX = 3, 16
 
@@ -86,7 +94,7 @@ def set_nickname(db, client: Client, raw: str, admin: bool = False) -> str:
     return nick
 
 
-# ---------- приветственный бонус ----------
+# ---------- приветственный колиз ----------
 
 def welcome_pending(db, client: Client) -> bool:
     """Получит ли гость подарок, когда закончит регистрацию."""
@@ -209,13 +217,82 @@ def settle_due(db) -> list[dict]:
             db.add(RatingAward(month=key, place=place, client_id=r["client_id"] if r else None,
                                nickname=r["nickname"] if r else None, volume=r["volume"] if r else 0,
                                amount=prize if r else 0))
-            if r:
-                db.query(Client).filter(Client.id == r["client_id"]).update(
-                    {Client.balance: func.coalesce(Client.balance, 0) + prize}, synchronize_session=False)
+            if r:   # приз начисляет админ на карту гостя в CRM — в приложении бонусы сгорают за сутки
                 awarded.append({"tg_id": r["tg_id"], "nickname": r["nickname"], "place": place,
-                                "amount": prize, "volume": r["volume"], "month": month_title(key)})
+                                "amount": prize, "volume": r["volume"], "month": month_title(key),
+                                "phone": db.query(Client.phone).filter(Client.id == r["client_id"]).scalar()})
         db.commit()
     except IntegrityError:          # уже выдали (параллельный запуск) — ничего не делаем
+        db.rollback()
+        return []
+    return awarded
+
+
+# ---------- «Самый дружелюбный» ----------
+
+def friendly_board(db, key: str) -> list[dict]:
+    """Кто сколько друзей привёл за месяц: [{client_id, tg_id, nickname, friends}]."""
+    start, end = month_bounds(key)
+    rows = (db.query(ReferralReward.referrer_id, func.count(ReferralReward.phone_normalized),
+                     func.max(ReferralReward.created_at))
+            .filter(ReferralReward.created_at >= start, ReferralReward.created_at < end)
+            .group_by(ReferralReward.referrer_id).all())
+    if not rows:
+        return []
+    clients = {c.id: c for c in db.query(Client).filter(
+        Client.id.in_([r[0] for r in rows]), Client.nickname.isnot(None)).all()}
+    board = [{"client_id": cid, "tg_id": clients[cid].tg_id, "nickname": clients[cid].nickname,
+              "friends": int(n), "last": last} for cid, n, last in rows if cid in clients and n]
+    board.sort(key=lambda r: (-r["friends"], r["last"]))   # при равенстве — кто набрал раньше
+    return board
+
+
+def friendly_view(db, me: Client, limit: int = 50) -> dict:
+    now = datetime.utcnow()
+    key = month_key(now)
+    board = friendly_board(db, key)
+    my_place = next((i + 1 for i, r in enumerate(board) if r["client_id"] == me.id), None)
+    start, end = month_bounds(key)
+    my_friends = db.query(func.count(ReferralReward.phone_normalized)).filter(
+        ReferralReward.referrer_id == me.id, ReferralReward.created_at >= start,
+        ReferralReward.created_at < end).scalar() or 0
+    last_month = prev_month(key)
+    winners = [{"place": a.place, "nickname": a.nickname, "friends": a.friends, "amount": a.amount}
+               for a in db.query(FriendAward).filter(FriendAward.month == last_month).order_by(FriendAward.place).all()]
+    end_msk = end + MSK - timedelta(minutes=1)
+    return {
+        "month": month_title(key),
+        "ends": f"{end_msk.day} {MONTHS_GEN[end_msk.month - 1]} в 23:59",
+        "prizes": FRIENDLY_PRIZES,
+        "top": [{"place": i + 1, "nickname": r["nickname"], "friends": r["friends"], "me": r["client_id"] == me.id}
+                for i, r in enumerate(board[:limit])],
+        "participants": len(board),
+        "me": {"place": my_place, "friends": int(my_friends), "eligible": bool(me.nickname)},
+        "last_month": month_title(last_month),
+        "last_winners": winners,
+    }
+
+
+def settle_friendly_due(db) -> list[dict]:
+    key = prev_month(month_key(datetime.utcnow()))
+    if key < RATING_FIRST_MONTH or not FRIENDLY_PRIZES:
+        return []
+    if db.query(FriendAward.month).filter(FriendAward.month == key).first() is not None:
+        return []
+    board = friendly_board(db, key)
+    awarded = []
+    try:
+        for place, prize in enumerate(FRIENDLY_PRIZES, start=1):
+            r = board[place - 1] if place <= len(board) else None
+            db.add(FriendAward(month=key, place=place, client_id=r["client_id"] if r else None,
+                               nickname=r["nickname"] if r else None, friends=r["friends"] if r else 0,
+                               amount=prize if r else 0))
+            if r:   # приз начисляет админ на карту гостя в CRM
+                awarded.append({"tg_id": r["tg_id"], "nickname": r["nickname"], "place": place,
+                                "amount": prize, "friends": r["friends"], "month": month_title(key),
+                                "phone": db.query(Client.phone).filter(Client.id == r["client_id"]).scalar()})
+        db.commit()
+    except IntegrityError:
         db.rollback()
         return []
     return awarded

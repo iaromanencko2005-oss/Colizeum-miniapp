@@ -31,6 +31,9 @@ def free_attempts_state(play_times: list[datetime], per_day: int, now: datetime)
 def format_wait(delta: timedelta) -> str:
     minutes = max(1, int(delta.total_seconds() // 60))
     hours, mins = divmod(minutes, 60)
+    if hours >= 24:
+        days, hours = divmod(hours, 24)
+        return f"{days} дн {hours} ч" if hours else f"{days} дн"
     if hours and mins:
         return f"{hours} ч {mins} мин"
     if hours:
@@ -41,7 +44,7 @@ def format_wait(delta: timedelta) -> str:
 # ---------- «Дайс»: бесплатная попытка ----------
 
 def free_probability_reward(chance: int) -> int:
-    """Приз за бесплатную попытку: чем ниже шанс, тем больше бонусов."""
+    """Приз за бесплатную попытку: чем ниже шанс, тем больше колизов."""
     return max(10, round(((100 - chance) * 1.2) / 10) * 10)
 
 
@@ -52,10 +55,10 @@ def roll_free_probability(chance: int, house_factor: float):
     return rolled, win
 
 
-# ---------- «Дайс»: ставка бонусами ----------
+# ---------- «Дайс»: ставка колизами ----------
 
 def bet_payout(stake: int, chance: int, house_edge_percent: int) -> int:
-    """Сколько бонусов гость получит при выигрыше (включая саму ставку).
+    """Сколько колизов гость получит при выигрыше (включая саму ставку).
     Считается целыми числами, чтобы не было ошибок округления."""
     return stake * (100 - house_edge_percent) // chance
 

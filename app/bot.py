@@ -37,6 +37,7 @@ from .models import (
     TIER_LABELS, SILVER_QUALIFY_FROM,
 )
 from .topups import parse_topups
+from .telegram_auth import make_login_token
 from . import referrals
 
 logger = logging.getLogger("colizeum")
@@ -45,7 +46,7 @@ logger = logging.getLogger("colizeum")
 # сюда не попадают — гостям они не нужны и всё равно не сработают.
 GUEST_COMMANDS = [
     BotCommand(command="start", description="Открыть личный кабинет"),
-    BotCommand(command="bonus", description="🎁 Пригласить друга и получить бонус"),
+    BotCommand(command="bonus", description="🎁 Пригласить друга и получить колизы"),
     BotCommand(command="phone", description="Подтвердить номер телефона"),
     BotCommand(command="stop", description="Отписаться от рассылки"),
 ]
@@ -79,10 +80,13 @@ def humanize_ago(dt) -> str:
     return f"{days} дн назад"
 
 
-def webapp_url(ref: str | None = None, **params) -> str:
-    """Адрес мини-приложения с метками: ref — ссылка друга, battle — открыть батл."""
+def webapp_url(ref: str | None = None, tg_id: int | None = None, name: str = "", **params) -> str:
+    """Адрес мини-приложения с метками: ref — ссылка друга, battle — открыть батл,
+    t — подписанный пропуск гостя (запасной вход, если Telegram не передал initData)."""
     if ref:
         params["ref"] = ref
+    if tg_id:
+        params["t"] = make_login_token(tg_id, name)
     if not params:
         return WEBAPP_URL
     parts = urlsplit(WEBAPP_URL)
@@ -108,7 +112,7 @@ async def battle_notify(bot: Bot, client_id: int, text: str, battle_id: int | No
                      InlineKeyboardButton(text="Отказаться", callback_data=f"bt:dec:{battle_id}")])
     elif battle_id and WEBAPP_URL:
         rows.append([InlineKeyboardButton(text="⚔️ Открыть батл",
-                                          web_app=WebAppInfo(url=webapp_url(battle=battle_id)))])
+                                          web_app=WebAppInfo(url=webapp_url(tg_id=tg_id, battle=battle_id)))])
     try:
         await bot.send_message(tg_id, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows) if rows else None)
     except Exception as e:  # noqa: BLE001 — гость мог не запускать бота или заблокировать его
@@ -149,15 +153,33 @@ async def cb_battle(callback: CallbackQuery):
             await callback.message.edit_text(
                 "⚔️ Вызов принят! Соперник выбирает игру и ставку — открывай батл.",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
-                    text="⚔️ Открыть батл", web_app=WebAppInfo(url=webapp_url(battle=battle_id)))]]) if WEBAPP_URL else None)
+                    text="⚔️ Открыть батл", web_app=WebAppInfo(url=webapp_url(
+                        tg_id=callback.from_user.id, name=callback.from_user.first_name or "", battle=battle_id)))]])
+                if WEBAPP_URL else None)
         else:
             await callback.message.edit_text("Вызов отклонён.")
     except Exception as e:  # noqa: BLE001 — старое сообщение могло стать недоступным
         logger.info("Батл: не удалось обновить сообщение: %s", e)
 
 
-def cabinet_button(ref: str | None = None) -> InlineKeyboardButton:
-    return InlineKeyboardButton(text="Открыть личный кабинет", web_app=WebAppInfo(url=webapp_url(ref)))
+def cabinet_button(ref: str | None = None, user=None, tg_id: int | None = None) -> InlineKeyboardButton:
+    tg_id = tg_id or (user.id if user else None)
+    name = (user.first_name or "") if user else ""
+    return InlineKeyboardButton(text="Открыть личный кабинет", web_app=WebAppInfo(url=webapp_url(ref, tg_id, name)))
+
+
+def _remember_username(user):
+    """Запоминаем @username — нужен тиммейтам, чтобы связаться."""
+    if not user or not user.username:
+        return
+    db = SessionLocal()
+    try:
+        c = db.query(Client).filter(Client.tg_id == user.id).first()
+        if c is not None and c.tg_username != user.username:
+            c.tg_username = user.username
+            db.commit()
+    finally:
+        db.close()
 
 
 @router.message(Command("start"))
@@ -174,10 +196,18 @@ async def cmd_start(message: Message, command: CommandObject):
     if arg == "bonus":
         await send_bonus_info(message.bot, message.from_user.id)
         return
+    _remember_username(message.from_user)
+    # Ссылки из группы: заявка тиммейтов, событие афиши — сразу открываем нужный раздел
+    for prefix, panel, title in (("team_", "team", "Открыть заявку"), ("event_", "events", "Открыть афишу")):
+        if arg.startswith(prefix) and arg[len(prefix):].isdigit():
+            await message.answer("Жми, чтобы открыть в приложении:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text=title, web_app=WebAppInfo(url=webapp_url(
+                    tg_id=message.from_user.id, name=message.from_user.first_name or "", panel=panel, item=arg[len(prefix):])))]]))
+            return
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [cabinet_button(ref)],
-        [InlineKeyboardButton(text="🎁 Получить бонус", callback_data="bonus")],
+        [cabinet_button(ref, message.from_user)],
+        [InlineKeyboardButton(text="🎁 Получить колизы", callback_data="bonus")],
     ])
     intro = ("Тебя пригласил друг — добро пожаловать в COLIZEUM!\n\n" if ref
              else "Добро пожаловать в COLIZEUM.\n\n")
@@ -189,7 +219,7 @@ async def cmd_start(message: Message, command: CommandObject):
     )
 
 
-# ---------- «Получить бонус»: пригласи друга ----------
+# ---------- «Получить колиз»: пригласи друга ----------
 
 async def send_bonus_info(bot: Bot, tg_id: int):
     """Личная ссылка для друзей. Пишем гостю в личный чат с ботом."""
@@ -201,7 +231,7 @@ async def send_bonus_info(bot: Bot, tg_id: int):
                 tg_id,
                 "Сначала открой личный кабинет и прими правила — после этого здесь появится "
                 "твоя личная ссылка для друзей.",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[cabinet_button()]]) if WEBAPP_URL else None,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[cabinet_button(tg_id=tg_id)]]) if WEBAPP_URL else None,
             )
             return
         invited = referrals.invited_count(db, client)
@@ -212,13 +242,17 @@ async def send_bonus_info(bot: Bot, tg_id: int):
     username = referrals.BOT_USERNAME or (await bot.me()).username
     link = referrals.referral_link(client_id, username)
     bonus = referrals.REFERRAL_BONUS
+    act = referrals.REFERRAL_ACTIVATION_BONUS
+    from .rating import WELCOME_BONUS
     await bot.send_message(
         tg_id,
-        f"🎁 Приведи друга в бота — получи {bonus} бонусов\n\n"
+        f"🎁 Приведи друга — получи до {bonus + act} колизов\n\n"
         "1. Нажми «Отправить другу» и выбери друга в Telegram.\n"
-        "2. Друг открывает бота, принимает правила и подтверждает номер.\n"
-        f"3. Тебе сразу приходят +{bonus} бонусов на баланс.\n\n"
-        "Засчитываются только новые пользователи бота, за каждый номер телефона — один раз.\n\n"
+        f"2. Друг открывает бота, принимает правила и подтверждает номер — тебе +{bonus} колизов.\n"
+        f"3. Друг впервые пополняет счёт в клубе — тебе ещё +{act} колизов.\n"
+        + (f"Другу — {WELCOME_BONUS} колизов в подарок за регистрацию.\n\n" if WELCOME_BONUS > 0 else "\n")
+        + "Засчитываются только новые пользователи бота, за каждый номер телефона — один раз. "
+        "Кто приведёт больше всех друзей за месяц — получит приз в рейтинге «Самый дружелюбный» 🤝\n\n"
         f"Твоя ссылка: {link}\n"
         f"Друзей уже привёл: {invited}",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
@@ -361,12 +395,15 @@ async def handle_contact(message: Message):
         client.phone = "+" + digits
         client.phone_normalized = norm
         client.phone_verified = True
+        if message.from_user.username:
+            client.tg_username = message.from_user.username
         topup, crm_found = lookup_topup(db, client)
         client.monthly_topup = topup
         db.commit()
         tier = TIER_LABELS[get_tier(topup)]
-        # Номер уже был в боте у другого аккаунта — это не новый гость, бонус за друга не платим.
+        # Номер уже был в боте у другого аккаунта — это не новый гость, колиз за друга не платим.
         reward = referrals.reward_referral(db, client) if not others else None
+        activations = referrals.check_activations(db) if reward else []
         from . import rating
         welcome = rating.try_welcome(db, client)
         need_nick = not client.nickname
@@ -378,12 +415,12 @@ async def handle_contact(message: Message):
         "на другой номер — скажи администратору, он свяжет номера.")
     extra = ""
     if welcome:
-        extra = f"\n\n🎁 Подарок за регистрацию: +{welcome} бонусов на баланс!"
+        extra = f"\n\n🎁 Подарок за регистрацию: +{welcome} колизов на баланс!"
     elif need_nick:
         extra = "\n\nОсталось придумать никнейм в кабинете — и получишь подарок за регистрацию 🎁"
     await message.answer(
         f"✅ Номер подтверждён. Твой уровень: {tier}.\n"
-        "Возвращайся в личный кабинет — игры и списание бонусов теперь доступны." + tail + extra,
+        "Возвращайся в личный кабинет — игры и списание колизов теперь доступны." + tail + extra,
         reply_markup=ReplyKeyboardRemove(),
     )
 
@@ -393,10 +430,15 @@ async def handle_contact(message: Message):
         try:
             await message.bot.send_message(
                 referrer_tg_id,
-                f"🎉 {friend} зарегистрировался по твоей ссылке — +{amount} бонусов на баланс!\n"
-                "Пригласить ещё: /bonus")
+                f"🎉 {friend} зарегистрировался по твоей ссылке — +{amount} колизов на баланс!\n"
+                + (f"Когда друг впервые пополнит счёт в клубе — придут ещё +{referrals.REFERRAL_ACTIVATION_BONUS}.\n"
+                   if referrals.REFERRAL_ACTIVATION_BONUS > 0 else "")
+                + "Пригласить ещё: /bonus")
         except Exception as e:  # noqa: BLE001 — пригласивший мог заблокировать бота
             logger.info("Не удалось уведомить пригласившего %s: %s", referrer_tg_id, e)
+    if activations:
+        from .bot_extra import notify_activations
+        await notify_activations(message.bot, activations)
 
 
 @router.message(Command("set_topup"))
@@ -428,8 +470,12 @@ async def cmd_set_topup(message: Message, command: CommandObject):
     db = SessionLocal()
     try:
         updated, _ = save_phone_stats(db, {norm: {"avg": amount, "total": None}})
+        activations = referrals.check_activations(db)
     finally:
         db.close()
+    if activations:
+        from .bot_extra import notify_activations
+        await notify_activations(message.bot, activations)
 
     tier = TIER_LABELS[get_tier(amount)]
     tail = "Гость уже в приложении — уровень обновлён." if updated else \
@@ -625,7 +671,7 @@ async def cmd_clients(message: Message):
 @router.message(Command("spend"))
 async def cmd_spend(message: Message, command: CommandObject):
     """Формат: /spend +79991234567 150
-    Списывает бонусы с баланса гостя, когда он расплачивается ими на кассе."""
+    Списывает колизы с баланса гостя, когда он расплачивается ими на кассе."""
     if not is_admin(message.from_user.id):
         return
 
@@ -659,12 +705,12 @@ async def cmd_spend(message: Message, command: CommandObject):
         current = client.balance or 0
         if current < amount:
             await message.answer(
-                f"Недостаточно бонусов: на балансе {current}, а списать нужно {amount}."
+                f"Недостаточно колизов: на балансе {current}, а списать нужно {amount}."
             )
             return
         client.balance = current - amount
         db.commit()
-        await message.answer(f"Списано {amount} бонусов. Остаток на балансе: {client.balance}.")
+        await message.answer(f"Списано {amount} колизов. Остаток на балансе: {client.balance}.")
     finally:
         db.close()
 
@@ -672,7 +718,7 @@ async def cmd_spend(message: Message, command: CommandObject):
 @router.message(Command("add_bonus"))
 async def cmd_add_bonus(message: Message, command: CommandObject):
     """Формат: /add_bonus +79991234567 150
-    Начисляет бонусы на баланс в приложении — например, вернуть бонусы
+    Начисляет колизы на баланс в приложении — например, вернуть колизы
     по отклонённой заявке на списание или начислить вручную."""
     if not is_admin(message.from_user.id):
         return
@@ -703,7 +749,7 @@ async def cmd_add_bonus(message: Message, command: CommandObject):
             return
         client.balance = (client.balance or 0) + amount
         db.commit()
-        await message.answer(f"Начислено {amount} бонусов. Баланс в приложении: {client.balance}.")
+        await message.answer(f"Начислено {amount} колизов. Баланс в приложении: {client.balance}.")
     finally:
         db.close()
 
@@ -760,8 +806,12 @@ async def handle_document(message: Message):
     try:
         # Полный лог из CRM заменяет статистику целиком; файл «телефон + сумма» — только дополняет.
         in_app, reset = save_phone_stats(db, stats, replace_all=kind in ("operations_log", "crm_log"))
+        activations = referrals.check_activations(db)
     finally:
         db.close()
+    if activations:
+        from .bot_extra import notify_activations
+        await notify_activations(message.bot, activations)
 
     counts = {name: 0 for name in TIER_LABELS}
     for st in stats.values():
@@ -792,6 +842,9 @@ async def handle_document(message: Message):
         lines.append(f"Нет в новой выгрузке — статус обнулён: {fmt(reset)} (перестали пополнять).")
     if info.get("bad"):
         lines.append(f"Не удалось прочитать строк: {info['bad']} (обычно это заголовок).")
+    if activations:
+        lines.append(f"Приглашённые друзья впервые пополнили счёт: {len(activations)} — пригласившим начислено "
+                     f"по {referrals.REFERRAL_ACTIVATION_BONUS} колизов.")
     await message.answer("\n".join(lines))
 
 
@@ -824,7 +877,7 @@ async def cmd_export(message: Message):
     ws = wb.active
     ws.title = "Пользователи"
     headers = ["Никнейм", "Имя в Telegram", "Telegram ID", "Телефон", "Номер подтверждён", "Уровень", "Кэшбэк, %",
-               "Среднее в месяц, ₽", "Баланс бонусов", "Согласие на ПДн (МСК)",
+               "Среднее в месяц, ₽", "Баланс колизов", "Согласие на ПДн (МСК)",
                "Первый вход (МСК)", "Последний визит (МСК)", "Найден в CRM", "Номер в CRM (если другой)",
                "Отписан от рассылки"]
     ws.append(headers)
@@ -1067,12 +1120,13 @@ async def run_broadcast(bot: Bot, pending: dict, report_chat_id: int):
 
 GAME_NAMES = {"spin": "Рулетка", "dice": "Кости", "probability": "Дайс",
               "crash": "Crash", "slots": "Слот", "hilo": "Больше-меньше",
-              "battle_blackjack": "Батл: 21", "battle_crash": "Батл: Crash-дуэль", "battle_poker": "Батл: покер"}
+              "battle_blackjack": "Батл: 21", "battle_crash": "Батл: Crash-дуэль", "battle_poker": "Батл: покер",
+              "predict": "Прогнозы"}
 
 
 @router.message(Command("games"))
 async def cmd_games(message: Message):
-    """Экономика игр: сколько бонусов роздано бесплатно и сколько клуб
+    """Экономика игр: сколько колизов роздано бесплатно и сколько клуб
     «забрал» в играх на ставки — за 7 дней и за всё время."""
     if not is_admin(message.from_user.id):
         return
@@ -1099,12 +1153,18 @@ async def cmd_games(message: Message):
                 else:
                     net = staked - paid
                     bet_net += net
-                    lines.append(f"  {name} (на бонусы): {fmt(n)} ставок, поставлено {fmt(staked)}, "
+                    lines.append(f"  {name} (на колизы): {fmt(n)} ставок, поставлено {fmt(staked)}, "
                                  f"выплачено {fmt(paid)}, клубу {'+' if net >= 0 else ''}{fmt(net)}")
             if not rows:
                 lines.append("  игр пока не было")
             lines.append(f"  Итого: роздано бесплатно {fmt(free_total)}, "
                          f"сгорело в ставках {'+' if bet_net >= 0 else ''}{fmt(bet_net)}")
+            from .models import BonusBurn
+            bq = db.query(func.count(BonusBurn.id), func.coalesce(func.sum(BonusBurn.amount), 0))
+            if since is not None:
+                bq = bq.filter(BonusBurn.created_at >= since)
+            bn, bsum = bq.one()
+            lines.append(f"  Сгорело (не потратили за сутки): {fmt(bsum)} колизов у {fmt(bn)} гостей")
             lines.append("")
         await message.answer("\n".join(lines).strip())
     finally:
@@ -1192,9 +1252,21 @@ async def cmd_admin(message: Message):
         "Файл Excel с подписью /import_topups — загрузить пополнения из CRM\n"
         "/set_topup +7… 12000 — вручную задать среднее в месяц\n"
         "/link_crm +7(Telegram) +7(CRM) — если в CRM гость на другом номере\n\n"
-        "Бонусы\n"
+        "Колизы\n"
         "/add_bonus +7… 150 — начислить в приложении\n"
         "/spend +7… 150 — списать в приложении\n\n"
+        "Магазин\n"
+        "/shop — товары и цены, /shop_price redbull 300\n"
+        "/shop_off monster, /shop_on monster — скрыть / вернуть товар (или вкус: /shop_off burn гуава)\n"
+        "/orders — заказы, которые ещё не выданы\n\n"
+
+        "Афиша\n"
+        "Фото с подписью /event 01.11 20:00 | Название | Описание — новое событие\n"
+        "/events — список, публикация в группе и удаление\n\n"
+        "Тиммейты\n"
+        "/team_del 12 — снять заявку, /profile_reset +7… — очистить «о себе» гостя\n\n"
+        "Группа клуба\n"
+        "/chatid — узнать ID группы (напиши в самой группе) для автопостов\n\n"
         "Рассылка\n"
         "/broadcast — как сделать рассылку (ответом на сообщение)\n\n"
         "Акции\n"
@@ -1210,4 +1282,8 @@ def build_bot_and_dispatcher() -> tuple[Bot, Dispatcher]:
     bot = Bot(token=bot_token)
     dp = Dispatcher()
     dp.include_router(router)
+    from .bot_social import router as social_router   # афиша, тиммейты
+    dp.include_router(social_router)
+    from .bot_extra import router as extra_router      # магазин, чеки
+    dp.include_router(extra_router)
     return bot, dp

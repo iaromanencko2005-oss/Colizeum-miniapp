@@ -181,14 +181,14 @@ def make_offer(db, me: Client, battle_id: int, game: str, stake: int) -> Battle:
         raise BattleError("Выбери игру")
     stake = int(stake or 0)
     if stake < MIN_STAKE:
-        raise BattleError(f"Минимальная ставка — {MIN_STAKE} бонусов")
+        raise BattleError(f"Минимальная ставка — {MIN_STAKE} колизов")
     if game == "poker":
         if stake > balance(db, me.id):
             raise BattleError("У тебя столько нет на балансе")
     else:
         limit = max_stake(db, b)
         if stake > limit:
-            raise BattleError(f"Максимальная ставка в этом батле — {limit} бонусов"
+            raise BattleError(f"Максимальная ставка в этом батле — {limit} колизов"
                               if limit >= MIN_STAKE else "У кого-то из вас меньше минимальной ставки")
     changed = (b.offer_game, b.offer_stake, b.offer_by) != (game, stake, me.id)
     b.offer_game, b.offer_stake, b.offer_by = game, stake, me.id
@@ -234,13 +234,13 @@ def _start_match(db, b: Battle):
         opp_balance = balance(db, ids[1 - proposer])
         stakes[1 - proposer] = stake if opp_balance >= stake else floor10(opp_balance)
         if stakes[1 - proposer] < MIN_STAKE:
-            raise BattleError(f"Чтобы сесть за стол, нужно минимум {MIN_STAKE} бонусов")
+            raise BattleError(f"Чтобы сесть за стол, нужно минимум {MIN_STAKE} колизов")
     else:
         stakes = [stake, stake]
     # Замораживаем ставки обоих одним действием: если у кого-то не хватает — не списываем ни у кого.
     if not _take(db, ids[0], stakes[0]) or not _take(db, ids[1], stakes[1]):
         db.rollback()
-        raise BattleError("Баланс изменился — у кого-то из вас уже не хватает бонусов. Предложите ставку поменьше")
+        raise BattleError("Баланс изменился — у кого-то из вас уже не хватает колизов. Предложите ставку поменьше")
     now = time.time()
     if game == "blackjack":
         state = G.bj_new(_rng, now)

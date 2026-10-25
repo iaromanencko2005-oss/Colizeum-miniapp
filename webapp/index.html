@@ -4,7 +4,92 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <title>COLIZEUM — личный кабинет</title>
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://telegram.org/js/telegram-web-app.js" onerror="window.__tgSdkFailed=true"></script>
+<script>
+/* Запасной мост к Telegram. Официальный скрипт Telegram грузится с telegram.org —
+   у части гостей этот сайт недоступен (оператор, VPN). Тогда берём данные гостя
+   из адреса страницы (их туда кладёт сам Telegram) и общаемся с приложением
+   Telegram напрямую — тем же способом, что и официальный скрипт.
+   Написано на старом JavaScript, чтобы работало на любом телефоне. */
+(function () {
+  var T = window.Telegram = window.Telegram || {};
+  if (T.WebApp && T.WebApp.initData) return;            // официальный скрипт загрузился — всё хорошо
+  function dec(v) { try { return decodeURIComponent(String(v).replace(/\+/g, "%20")); } catch (e) { return v; } }
+  function parseQS(str) {
+    var out = {}; str = String(str || "").replace(/^[#?]/, "");
+    if (!str) return out;
+    var parts = str.split("&");
+    for (var i = 0; i < parts.length; i++) {
+      if (!parts[i]) continue;
+      var j = parts[i].indexOf("=");
+      out[dec(j < 0 ? parts[i] : parts[i].slice(0, j))] = j < 0 ? "" : dec(parts[i].slice(j + 1));
+    }
+    return out;
+  }
+  var params = parseQS(location.hash);
+  try {
+    if (params.tgWebAppData) sessionStorage.setItem("__colz_tg", JSON.stringify(params));
+    else params = JSON.parse(sessionStorage.getItem("__colz_tg") || "{}");
+  } catch (e) {}
+  var initData = params.tgWebAppData || "";
+  var unsafe = parseQS(initData), user = null;
+  try { user = unsafe.user ? JSON.parse(unsafe.user) : null; } catch (e) {}
+  var version = params.tgWebAppVersion || "6.0", platform = params.tgWebAppPlatform || "unknown";
+
+  function post(type, data) {
+    var payload = JSON.stringify(data || {});
+    try {
+      if (window.TelegramWebviewProxy && window.TelegramWebviewProxy.postEvent) {
+        window.TelegramWebviewProxy.postEvent(type, payload);                      // Android, iOS
+      } else if (window.external && "notify" in window.external) {
+        window.external.notify(JSON.stringify({ eventType: type, eventData: data || {} }));
+      } else if (window.parent && window.parent !== window) {
+        window.parent.postMessage(JSON.stringify({ eventType: type, eventData: data || {} }), "*");   // Telegram Desktop / Web
+      }
+    } catch (e) {}
+  }
+  var handlers = {};
+  function on(t, f) { (handlers[t] = handlers[t] || []).push(f); }
+  function off(t, f) { var a = handlers[t] || []; for (var i = a.length - 1; i >= 0; i--) if (a[i] === f) a.splice(i, 1); }
+  function receive(t, d) { var a = (handlers[t] || []).slice(); for (var i = 0; i < a.length; i++) { try { a[i](t, d); } catch (e) {} } }
+  T.WebView = T.WebView || {};
+  T.WebView.receiveEvent = receive;
+  window.addEventListener("message", function (ev) {
+    try { var m = typeof ev.data === "string" ? JSON.parse(ev.data) : ev.data; if (m && m.eventType) receive(m.eventType, m.eventData); } catch (e) {}
+  });
+  function atLeast(v) {
+    var a = version.split("."), b = String(v).split(".");
+    for (var i = 0; i < Math.max(a.length, b.length); i++) {
+      var x = parseInt(a[i] || 0, 10), y = parseInt(b[i] || 0, 10);
+      if (x !== y) return x > y;
+    }
+    return true;
+  }
+  function once(eventName, cb) { var h = function (t, d) { off(eventName, h); cb(d || {}); }; on(eventName, h); }
+  T.WebApp = {
+    __bridge: true, initData: initData, version: version, platform: platform,
+    initDataUnsafe: { user: user, start_param: unsafe.start_param, query_id: unsafe.query_id, auth_date: unsafe.auth_date, hash: unsafe.hash },
+    ready: function () { post("web_app_ready"); },
+    expand: function () { post("web_app_expand"); },
+    isVersionAtLeast: atLeast,
+    requestContact: function (cb) { once("phone_requested", function (d) { if (cb) cb(d.status === "sent"); }); post("web_app_request_phone"); },
+    requestWriteAccess: function (cb) { once("write_access_requested", function (d) { if (cb) cb(d.status === "allowed"); }); post("web_app_request_write_access"); },
+    openTelegramLink: function (url) {
+      var m = String(url).match(/^https?:\/\/t\.me(\/.*)$/);
+      if (m && atLeast("6.1")) post("web_app_open_tg_link", { path_full: m[1] }); else window.location.href = url;
+    },
+    showConfirm: function (msg, cb) {
+      if (!atLeast("6.2")) { if (cb) cb(window.confirm(msg)); return; }
+      once("popup_closed", function (d) { if (cb) cb(d.button_id === "ok"); });
+      post("web_app_open_popup", { message: msg, buttons: [{ id: "ok", type: "ok" }, { id: "cancel", type: "cancel" }] });
+    },
+    HapticFeedback: {
+      impactOccurred: function (s) { post("web_app_trigger_haptic_feedback", { type: "impact", impact_style: s }); },
+      notificationOccurred: function (s) { post("web_app_trigger_haptic_feedback", { type: "notification", notification_type: s }); }
+    }
+  };
+})();
+</script>
 <script>
 /* Страховка для старых телефонов (написано на старом JavaScript, чтобы работало везде).
    Если кабинет не загрузился за 12 секунд или упал с ошибкой — показываем гостю,
@@ -13,35 +98,51 @@
   var errors = [];
   window.__appReady = false;
   function tgInfo() { var t = window.Telegram && window.Telegram.WebApp; return t || {}; }
+  function keys(str) { var out = [], p = String(str || "").replace(/^[#?]/, "").split("&");
+    for (var i = 0; i < p.length; i++) if (p[i]) out.push(p[i].split("=")[0]); return out.join(",") || "—"; }
+  function techInfo() {
+    return "адрес " + location.pathname + " · параметры: " + keys(location.search) + " · после #: " + keys(location.hash) +
+      " · мост Android/iOS: " + (window.TelegramWebviewProxy ? "есть" : "нет") +
+      " · в рамке: " + (window.parent !== window ? "да" : "нет") +
+      " · скрипт telegram.org: " + (window.__tgSdkFailed ? "не загрузился" : "загрузился");
+  }
   function send(kind, msg) {
     try {
       var t = tgInfo(), x = new XMLHttpRequest();
       x.open("POST", "/api/client_error");
       x.setRequestHeader("Content-Type", "application/json");
       x.send(JSON.stringify({ kind: kind, message: String(msg || "").slice(0, 500), ua: navigator.userAgent,
-        tg_version: t.version || "", platform: t.platform || "", has_init: !!t.initData }));
+        tg_version: (t.version || "") + (t.__bridge ? " · запасной мост" : "") + (window.__tgSdkFailed ? " · скрипт telegram.org не загрузился" : ""),
+        platform: t.platform || "", has_init: !!t.initData || /[?&]t=/.test(location.search),
+        has_hash: location.hash.indexOf("tgWebAppData") >= 0, extra: techInfo() }));
     } catch (e) {}
   }
   window.__reportError = send;
-  window.addEventListener("error", function (e) { errors.push(e.message); send("js", e.message + " (строка " + (e.lineno || "?") + ")"); });
+  // Ошибки только копим: «Script error.» от скрипта telegram.org бывает и у тех, у кого всё работает.
+  // Администратору сообщаем, лишь если кабинет действительно не открылся за 12 секунд.
+  window.addEventListener("error", function (e) {
+    var m = (e.message || "ошибка") + (e.lineno ? " (строка " + e.lineno + ")" : "");
+    if (errors.indexOf(m) < 0 && errors.length < 5) errors.push(m);
+  });
   setTimeout(function () {
     if (window.__appReady) return;
-    var noInit = !tgInfo().initData;
+    var noInit = !tgInfo().initData && !/[?&]t=/.test(location.search);
+    var hasToken = /[?&]t=/.test(location.search);
+    var browserLink = hasToken ? "<p><a href='" + location.href.split("#")[0].replace(/'/g, "%27") + "' target='_blank' rel='noopener' " +
+      "style='display:inline-block;margin-top:6px;padding:12px 18px;border-radius:12px;background:#F5E92E;color:#000;font-weight:700;text-decoration:none'>Открыть кабинет в браузере</a></p>" : "";
     var box = document.createElement("div");
     box.setAttribute("style", "position:fixed;inset:0;z-index:99;background:#000;color:#fff;padding:28px 22px;font:15px/1.5 -apple-system,Roboto,sans-serif;overflow:auto");
     box.innerHTML = noInit
-      ? "<h2 style='color:#F5E92E;margin:0 0 12px'>Открой кабинет через бота</h2><p>Похоже, страница открыта не из Telegram. Вернись в чат с ботом COLIZEUM, отправь <b>/start</b> и нажми «Открыть личный кабинет».</p>"
+      ? "<h2 style='color:#F5E92E;margin:0 0 12px'>Открой кабинет заново</h2><p>Telegram не передал кабинету твои данные. Вернись в чат с ботом COLIZEUM, отправь <b>/start</b> и нажми «Открыть личный кабинет» <b>в новом сообщении</b> бота — в этой кнопке твой личный пропуск.</p>"
       : "<h2 style='color:#F5E92E;margin:0 0 12px'>Кабинет не загрузился</h2>" +
         "<p>Скорее всего, на телефоне устарел встроенный браузер, через который Telegram открывает приложения.</p>" +
         "<p><b>Что сделать:</b><br>1. Обнови Telegram.<br>2. В Google Play найди и обнови <b>«Android System WebView»</b> и <b>«Google Chrome»</b>.<br>3. Закрой и снова открой кабинет из бота.</p>" +
-        "<p style='color:#9498A3'>Не помогло — покажи этот экран администратору клуба.</p>";
+        browserLink + "<p style='color:#9498A3'>Не помогло — покажи этот экран администратору клуба.</p>";
     document.body.appendChild(box);
     send("timeout", errors.join(" | ") || "без ошибок, но не загрузилось");
   }, 12000);
 })();
 </script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600;700;800&family=Golos+Text:wght@400;500;600;700&display=swap">
 <style>
   :root {
     --bg: #000000;
@@ -56,7 +157,7 @@
   html, body { margin: 0; padding: 0; background: var(--bg); }
   body {
     color: var(--text);
-    font-family: 'Golos Text', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-family: 'Geologica', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     padding-bottom: 84px;
   }
   a { color: inherit; text-decoration: none; }
@@ -90,6 +191,8 @@
   .balance-label { font-size: 12.5px; color: var(--muted); margin-bottom: 4px; white-space: nowrap; }
   .balance-value { font-family: 'Unbounded', sans-serif; font-weight: 700; font-size: 26px; color: var(--accent); line-height: 1.1; }
   .balance-unit { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .burn-line { font-size: 12px; color: #FF9F43; margin-top: 4px; font-weight: 600; }
+  .os-timer { margin-top: 8px; font-size: 13px; font-weight: 700; }
   .balance-card button.primary { width: auto; padding: 12px 26px; flex-shrink: 0; }
 
   .tier-row { display: flex; align-items: center; justify-content: space-between; }
@@ -129,7 +232,7 @@
   input[type="tel"], input[type="text"], input[type="number"], textarea {
     width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border);
     background: var(--surface); color: var(--text); font-size: 14px; margin-bottom: 12px;
-    font-family: 'Golos Text', sans-serif;
+    font-family: 'Geologica', sans-serif;
   }
   input::placeholder, textarea::placeholder { color: #6E6E72; }
   input:focus, textarea:focus { outline: none; border-color: var(--accent); }
@@ -139,12 +242,12 @@
   button.primary {
     width: 100%; padding: 14px; border: none; border-radius: 14px;
     background: var(--accent); color: #000; font-size: 15px; font-weight: 700;
-    font-family: 'Golos Text', sans-serif; cursor: pointer;
+    font-family: 'Geologica', sans-serif; cursor: pointer;
   }
   button.secondary {
     width: 100%; padding: 12px; border: 1px solid var(--accent); border-radius: 14px;
     background: transparent; color: var(--accent); font-size: 14px; font-weight: 700;
-    font-family: 'Golos Text', sans-serif; cursor: pointer;
+    font-family: 'Geologica', sans-serif; cursor: pointer;
   }
   button:disabled { opacity: 0.45; cursor: default; }
   .btn-row { display: flex; gap: 10px; }
@@ -152,7 +255,7 @@
 
   .back-link {
     display: inline-flex; align-items: center; gap: 6px; background: none; border: none; padding: 0;
-    color: var(--muted); font-family: 'Golos Text', sans-serif; font-size: 13px; cursor: pointer; margin-bottom: 16px;
+    color: var(--muted); font-family: 'Geologica', sans-serif; font-size: 13px; cursor: pointer; margin-bottom: 16px;
   }
 
   .promo-card { display: flex; flex-direction: column; gap: 8px; }
@@ -244,7 +347,7 @@
   .consent-text { font-size: 13px; color: var(--muted); line-height: 1.5; }
   .link-btn {
     background: none; border: none; padding: 0; margin-top: 12px; cursor: pointer;
-    color: var(--accent); font-family: 'Golos Text', sans-serif; font-size: 13.5px; font-weight: 600;
+    color: var(--accent); font-family: 'Geologica', sans-serif; font-size: 13.5px; font-weight: 600;
   }
   .policy-box { margin-top: 12px; padding-top: 4px; border-top: 1px solid var(--border); }
   .policy-box h3 { font-size: 14px; font-weight: 700; margin: 16px 0 6px; color: var(--text); }
@@ -269,7 +372,7 @@
   .nav-balance { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 99px;
     background: var(--accent); color: #000; font-weight: 700; font-size: 12.5px; }
   .nav-chip { flex-shrink: 0; padding: 7px 12px; border-radius: 99px; border: 1px solid var(--border); background: var(--surface);
-    color: var(--muted); font-family: 'Golos Text', sans-serif; font-size: 12.5px; cursor: pointer; white-space: nowrap; }
+    color: var(--muted); font-family: 'Geologica', sans-serif; font-size: 12.5px; cursor: pointer; white-space: nowrap; }
   .nav-chip:active { border-color: var(--accent); color: var(--accent); }
   .games-section { font-family: 'Unbounded', sans-serif; font-weight: 700; font-size: 13px; letter-spacing: .4px;
     color: var(--muted); text-transform: uppercase; margin: 22px 2px 10px; }
@@ -278,7 +381,7 @@
   .tag-bet { color: var(--accent); }
   .chip-row { display: flex; gap: 6px; margin: 8px 0 12px; flex-wrap: wrap; }
   .chip { padding: 7px 11px; border-radius: 10px; border: 1px solid var(--border); background: #0B0B0B; color: var(--text);
-    font-family: 'Golos Text', sans-serif; font-size: 12.5px; cursor: pointer; }
+    font-family: 'Geologica', sans-serif; font-size: 12.5px; cursor: pointer; }
   .chip.on { border-color: var(--accent); color: var(--accent); }
   .mini-label { font-size: 12px; color: var(--muted); margin-top: 2px; }
   .game-result { min-height: 20px; text-align: center; font-size: 13.5px; font-weight: 600; margin: 10px 0 2px; color: var(--muted); }
@@ -348,7 +451,7 @@
   .paytable .pt-syms { display: flex; gap: 4px; }
   .paytable .pt-syms svg { width: 20px; height: 20px; }
   .paytable .pt-mult { font-family: 'Unbounded', sans-serif; font-weight: 700; font-size: 12px; color: var(--accent); text-align: right; }
-  .paytable .pt-mult.back { color: var(--muted); font-family: 'Golos Text', sans-serif; font-weight: 600; }
+  .paytable .pt-mult.back { color: var(--muted); font-family: 'Geologica', sans-serif; font-weight: 600; }
 
   /* ---------- Больше-меньше ---------- */
   .hilo-table { display: flex; align-items: center; justify-content: center; gap: 18px; margin: 14px 0 16px;
@@ -369,7 +472,7 @@
     box-shadow: 0 6px 18px rgba(0,0,0,.6); overflow: hidden; }
   .pcard-face.red { color: #D7263D; }
   .pc-corner { position: absolute; display: flex; flex-direction: column; align-items: center; line-height: 1; font-weight: 700; }
-  .pc-corner b { font-family: 'Golos Text', sans-serif; font-size: 15px; }
+  .pc-corner b { font-family: 'Geologica', sans-serif; font-size: 15px; }
   .pc-corner i { font-style: normal; font-size: 12px; margin-top: 1px; }
   .pc-corner.tl { top: 6px; left: 6px; }
   .pc-corner.br { bottom: 6px; right: 6px; }
@@ -402,11 +505,11 @@
   .room-vs { font-family: 'Unbounded', sans-serif; font-weight: 700; font-size: 17px; }
   .room-vs span { color: var(--accent); }
   .room-bal { font-size: 12px; color: var(--muted); margin-top: 3px; }
-  .link-danger { background: none; border: none; color: var(--muted-2); font-size: 12.5px; cursor: pointer; font-family: 'Golos Text', sans-serif; }
+  .link-danger { background: none; border: none; color: var(--muted-2); font-size: 12.5px; cursor: pointer; font-family: 'Geologica', sans-serif; }
   .gtiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
   .gtile { padding: 12px 6px; border-radius: 14px; border: 1px solid var(--border); background: #0b0b0b; color: var(--text);
-    display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; font-family: 'Golos Text', sans-serif; }
-  .gtile .gi { font-size: 22px; line-height: 1; }
+    display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; font-family: 'Geologica', sans-serif; }
+  .gtile .gi { font-family: "Unbounded"; font-weight: 800; font-size: 18px; line-height: 1; color: var(--accent); }
   .gtile b { font-size: 13px; }
   .gtile small { font-size: 10.5px; color: var(--muted); text-align: center; }
   .gtile.on { border-color: var(--accent); background: rgba(245,233,46,.06); }
@@ -458,7 +561,7 @@
   .gift-line { font-size: 13px; color: var(--accent); font-weight: 600; margin: -4px 0 12px; }
   .nick-line { font-size: 13px; color: var(--muted); margin: -12px 0 18px; }
   .nick-line b { color: #fff; }
-  .nick-line button { background: none; border: none; color: var(--accent); font-family: 'Golos Text', sans-serif; font-size: 13px; cursor: pointer; padding: 0 0 0 6px; }
+  .nick-line button { background: none; border: none; color: var(--accent); font-family: 'Geologica', sans-serif; font-size: 13px; cursor: pointer; padding: 0 0 0 6px; }
   .prize-card { display: flex; gap: 14px; align-items: center; background: linear-gradient(135deg, #1f1c00, #0d0d0d 70%); border-color: #3a3500; }
   .prize-card .cup { font-size: 34px; }
   .prize-card b { font-family: 'Unbounded', sans-serif; font-size: 16px; color: var(--accent); display: block; }
@@ -474,6 +577,106 @@
   .rt-row.me { background: rgba(245,233,46,.08); }
   .rt-row.me .nick::after { content: " · ты"; color: var(--accent); font-weight: 700; }
   .rt-row.top .n { font-size: 18px; }
+
+  /* ---------- магазин ---------- */
+  .shop-note { border-color: #3a3500; background: linear-gradient(135deg, #1a1800, #0d0d0d 70%); font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+  .shop-note b { color: var(--accent); }
+  .shop-limit { margin-top: 8px; font-size: 12.5px; color: #fff; }
+  .shop-section { font-family: 'Unbounded', sans-serif; font-weight: 700; font-size: 13px; letter-spacing: .4px; color: var(--muted);
+    text-transform: uppercase; margin: 20px 2px 10px; scroll-margin-top: 64px; }
+  .pgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .pcard2 { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; padding: 8px; display: flex; flex-direction: column;
+    cursor: pointer; position: relative; -webkit-tap-highlight-color: transparent; }
+  .pcard2:active { border-color: #3a3500; }
+  .pimg { background: #fff; border-radius: 13px; position: relative; padding-top: 100%; overflow: hidden; }
+  .pimg img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; }
+  .p18 { position: absolute; top: 14px; left: 14px; font-size: 10px; font-weight: 800; color: #fff; background: #D7263D; border-radius: 6px; padding: 2px 5px; }
+  .pinfo { padding: 8px 4px 2px; display: flex; flex-direction: column; gap: 2px; flex: 1; }
+  .pname { font-size: 13px; font-weight: 600; line-height: 1.25; }
+  .pvars { font-size: 11.5px; color: var(--muted); }
+  .pbottom { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
+  .pprice { font-family: 'Unbounded', sans-serif; font-weight: 700; font-size: 14px; color: var(--accent); }
+  .pprice small { font-family: 'Geologica', sans-serif; font-weight: 600; font-size: 11px; color: var(--muted); margin-left: 3px; }
+  .padd { width: 32px; height: 32px; border-radius: 10px; border: none; background: var(--accent); color: #000; font-size: 20px; font-weight: 700; line-height: 1; cursor: pointer; }
+  .pincart { position: absolute; top: 14px; right: 14px; min-width: 22px; height: 22px; border-radius: 99px; background: var(--accent); color: #000;
+    font-size: 12px; font-weight: 800; display: flex; align-items: center; justify-content: center; padding: 0 6px; }
+  .cart-bar { position: fixed; left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom, 0px) + 70px); z-index: 15;
+    background: var(--accent); color: #000; border-radius: 16px; padding: 13px 16px; display: flex; align-items: center; justify-content: space-between;
+    font-weight: 700; font-size: 14px; box-shadow: 0 8px 30px rgba(0,0,0,.6); cursor: pointer; }
+  .cart-n { width: 26px; height: 26px; border-radius: 50%; background: #000; color: var(--accent); display: inline-flex; align-items: center; justify-content: center; font-size: 13px; }
+  body.has-cart #panel-shop { padding-bottom: 76px; }
+  .sheet-bg { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 40; background: rgba(0,0,0,.7); display: flex; align-items: flex-end; }
+  .sheet { width: 100%; max-height: 92vh; overflow-y: auto; background: #0e0e0e; border-top: 1px solid #262626; border-radius: 22px 22px 0 0;
+    padding: 10px 18px calc(env(safe-area-inset-bottom, 0px) + 18px); animation: sheetIn .22s ease-out; }
+  @keyframes sheetIn { from { transform: translateY(40px); opacity: .4; } }
+  .sheet-grip { width: 40px; height: 4px; border-radius: 99px; background: #333; margin: 0 auto 12px; }
+  .sheet-x { float: right; background: none; border: none; color: var(--muted); font-size: 22px; line-height: 1; cursor: pointer; padding: 0 2px; }
+  .sheet-img { background: #fff; border-radius: 18px; height: 230px; display: flex; align-items: center; justify-content: center; margin: 4px 0 14px; }
+  .sheet-img img { height: 100%; max-width: 100%; object-fit: contain; }
+  .sheet-title { font-weight: 700; font-size: 18px; margin-bottom: 4px; }
+  .vchips { display: flex; gap: 6px; flex-wrap: wrap; margin: 12px 0 14px; }
+  .vchip { padding: 8px 12px; border-radius: 12px; border: 1px solid var(--border); background: #141414; color: var(--text); font-size: 13px;
+    font-family: 'Geologica', sans-serif; cursor: pointer; }
+  .vchip.on { border-color: var(--accent); color: var(--accent); background: rgba(245,233,46,.06); }
+  .qty { display: inline-flex; align-items: center; gap: 0; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .qty button { width: 38px; height: 38px; border: none; background: #151515; color: #fff; font-size: 18px; cursor: pointer; }
+  .qty b { min-width: 34px; text-align: center; font-size: 15px; }
+  .qty.sm button { width: 30px; height: 30px; font-size: 16px; }
+  .qty.sm b { min-width: 26px; font-size: 13px; }
+  .row-between { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .cline { display: grid; grid-template-columns: 52px 1fr auto; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid #1a1a1a; }
+  .cline img { width: 52px; height: 52px; background: #fff; border-radius: 10px; object-fit: contain; }
+  .cline .cn { font-size: 13.5px; font-weight: 600; line-height: 1.25; }
+  .cline .cv { font-size: 12px; color: var(--muted); }
+  .cline .cp { font-size: 12.5px; color: var(--accent); font-weight: 700; margin-top: 3px; }
+  .ctotal { display: flex; justify-content: space-between; align-items: baseline; margin: 14px 0 6px; }
+  .ctotal b { font-family: 'Unbounded', sans-serif; font-size: 20px; color: var(--accent); }
+  .cwarn { font-size: 12.5px; color: #FF8A7A; margin: 4px 0 10px; line-height: 1.4; }
+  .order-chip { display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid var(--accent);
+    border-radius: 16px; padding: 12px 14px; margin-bottom: 10px; cursor: pointer; background: rgba(245,233,46,.05); }
+  .order-chip b { color: var(--accent); }
+  /* живой экран заказа — его гость показывает на стойке */
+  .order-screen { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 60; background: #000; overflow-y: auto; padding: 18px 18px 30px; }
+  .os-live { position: relative; overflow: hidden; border-radius: 22px; padding: 20px 18px; text-align: center;
+    background: repeating-linear-gradient(-45deg, #F5E92E 0 18px, #E3D500 18px 36px); color: #000;
+    animation: osRun 1.6s linear infinite; }
+  @keyframes osRun { from { background-position: 0 0; } to { background-position: 51px 0; } }
+  .os-live.done { animation: none; background: #1f1f1f; color: #fff; }
+  .os-num { font-family: 'Unbounded', sans-serif; font-weight: 800; font-size: 54px; line-height: 1; letter-spacing: -1px; }
+  .os-cap { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; margin-bottom: 6px; opacity: .75; }
+  .os-clock { font-family: 'Unbounded', sans-serif; font-weight: 700; font-size: 30px; margin-top: 10px; font-variant-numeric: tabular-nums; }
+  .os-pulse { width: 12px; height: 12px; border-radius: 50%; background: #000; display: inline-block; margin-right: 8px; animation: osPulse 1s ease-in-out infinite; vertical-align: middle; }
+  @keyframes osPulse { 50% { transform: scale(.4); opacity: .3; } }
+  .os-status { margin: 14px 0; text-align: center; font-weight: 700; font-size: 16px; }
+  .os-status.issued { color: var(--accent); }
+  .os-status.cancelled { color: #FF8A7A; }
+  /* ---------- прогнозы ---------- */
+  .mcard2 { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 16px; margin-bottom: 12px; }
+  .mhead { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--muted); margin-bottom: 12px; gap: 8px; }
+  .mgame { font-weight: 800; color: #000; background: var(--accent); border-radius: 6px; padding: 2px 7px; font-size: 11px; margin-right: 6px; }
+  .mteams { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .mteam { border: 1px solid var(--border); background: #0b0b0b; color: var(--text); border-radius: 14px; padding: 12px 8px; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 6px; font-family: 'Geologica', sans-serif; }
+  .mteam b { font-size: 14px; text-align: center; line-height: 1.2; word-break: break-word; }
+  .mteam span { font-family: 'Unbounded', sans-serif; font-weight: 700; color: var(--accent); font-size: 15px; }
+  .mteam.on { border-color: var(--accent); background: rgba(245,233,46,.07); }
+  .mteam:disabled { opacity: .55; }
+  .mbet { margin-top: 12px; }
+  .mmine { margin-top: 10px; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+  .mmine b { color: #fff; }
+  .mmine .won { color: var(--accent); }
+  .mmine .lost { color: #FF8A7A; }
+  /* ---------- вкладки рейтинга, отметка ---------- */
+  .tabs { display: flex; gap: 6px; background: #0e0e0e; border: 1px solid var(--border); border-radius: 14px; padding: 4px; margin-bottom: 14px; }
+  .tabs button { flex: 1; border: none; background: none; color: var(--muted); padding: 9px 6px; border-radius: 10px; font-family: 'Geologica', sans-serif;
+    font-size: 13px; font-weight: 600; cursor: pointer; }
+  .tabs button.on { background: var(--accent); color: #000; }
+  .ci-card { display: flex; gap: 14px; align-items: center; }
+  .ci-icon { font-size: 30px; }
+  .ci-card .t { font-weight: 700; font-size: 14.5px; }
+  .ci-card .s { font-size: 12.5px; color: var(--muted); margin-top: 3px; line-height: 1.35; }
+  .ci-card button.primary { width: auto; padding: 11px 14px; flex-shrink: 0; font-size: 13.5px; }
+  .battle-cta { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; }
   .bottom-nav .nav-item { font-size: 10px; min-width: 0; flex: 1; }
   .hidden { display: none !important; }
 
@@ -484,133 +687,467 @@
   }
   .nav-item {
     display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--muted-2);
-    background: none; border: none; font-family: 'Golos Text', sans-serif; font-size: 10.5px; cursor: pointer;
+    background: none; border: none; font-family: 'Geologica', sans-serif; font-size: 10.5px; cursor: pointer;
   }
   .nav-item.active { color: var(--accent); font-weight: 600; }
   .nav-item svg { width: 20px; height: 20px; }
+
+  /* ================= РЕДИЗАЙН (октябрь 2026) ================= */
+  @font-face { font-family: "Unbounded"; src: url("fonts/unbounded.woff") format("woff"); font-weight: 500 800; font-display: swap; }
+  @font-face { font-family: "Geologica"; src: url("fonts/geologica.woff") format("woff"); font-weight: 400 800; font-display: swap; }
+  :root {
+    --bg: #000000;
+    --surface: #161618;
+    --surface-2: #222226;
+    --border: #2c2c31;
+    --text: #f5f5f2;
+    --muted: #8c8c93;
+    --muted-2: #6f6f76;
+    --accent: #f5e92e;
+    --ember: #ff6a3d;
+  }
+  body { font-family: "Geologica", -apple-system, "Segoe UI", Roboto, sans-serif; padding-bottom: 28px; -webkit-font-smoothing: antialiased; }
+  .display, .u { font-family: "Unbounded", sans-serif; }
+  button, input, textarea { font-family: "Geologica", sans-serif; }
+  .panel { padding: 12px 18px 24px; }
+  .card { border: none; border-radius: 22px; padding: 16px; }
+  button.primary { border-radius: 16px; padding: 15px; font-weight: 700; }
+  button.secondary { border-radius: 16px; border: none; background: var(--surface-2); color: var(--text); }
+  input[type="tel"], input[type="text"], input[type="number"], textarea { border: none; border-radius: 16px; padding: 15px 16px; font-size: 15px; background: var(--surface); }
+  input:focus, textarea:focus { box-shadow: inset 0 0 0 2px var(--accent); }
+  .hint { color: var(--muted-2); }
+  .toast { bottom: 24px; border: none; background: #2a2a2e; border-radius: 16px; padding: 13px 16px; font-size: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.6); }
+  .hidden { display: none !important; }
+  .coin { display: inline-block; width: .62em; height: .62em; border-radius: 50%; background: var(--accent); vertical-align: .06em; margin-left: .22em; }
+
+  /* шапка главной */
+  .top { display: flex; align-items: center; justify-content: space-between; height: 44px; margin-bottom: 14px; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand img { width: 34px; height: 34px; border-radius: 50%; }
+  .brand span { font-family: "Unbounded"; font-weight: 700; font-size: 15px; letter-spacing: .2px; }
+  .avatar { width: 40px; height: 40px; border-radius: 50%; border: none; background: var(--surface-2); color: var(--accent); font-family: "Unbounded"; font-weight: 600; font-size: 15px; cursor: pointer; }
+
+  /* клубная карта — повторяет маску талисмана */
+  .pass { background: var(--accent); border-radius: 30px; color: #000; overflow: hidden; }
+  .pass-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 16px 20px 13px; }
+  .pass-name { font-weight: 700; font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pass-tier { border: none; background: rgba(0,0,0,.08); border-radius: 12px; padding: 6px 10px; font-weight: 600; font-size: 13px; color: #000; cursor: pointer; white-space: nowrap; }
+  .pass-band { background: #000; color: #fff; display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; position: relative; }
+  .pass-band::after { content: ""; position: absolute; left: 50%; bottom: -1px; width: 24px; height: 13px; margin-left: -12px; background: var(--accent);
+    -webkit-clip-path: polygon(50% 0, 100% 100%, 0 100%); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+  .pass-band svg { width: 22px; height: 22px; flex-shrink: 0; }
+  .bal { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+  .bal b { font-family: "Unbounded"; font-weight: 700; font-size: 38px; letter-spacing: -1px; line-height: 1; }
+  .bal span { font-size: 14px; color: #b9b9b9; }
+  .pass-foot { padding: 20px 20px 18px; }
+  .pass-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; }
+  .burn { font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .burn svg { width: 15px; height: 15px; flex-shrink: 0; }
+  .btn-ink { background: #000; color: var(--accent); border: none; border-radius: 16px; padding: 12px 20px; font-weight: 700; font-size: 15px; cursor: pointer; flex-shrink: 0; }
+  .btn-ink:disabled { opacity: .35; }
+  .prog { margin-top: 14px; }
+  .prog-track { height: 6px; border-radius: 6px; background: rgba(0,0,0,.14); overflow: hidden; }
+  .prog-fill { height: 100%; width: 0; background: #000; border-radius: 6px; transition: width .4s ease; }
+  .prog-label { font-size: 12.5px; margin-top: 7px; color: rgba(0,0,0,.65); line-height: 1.35; }
+  .under-pass { font-size: 12.5px; color: var(--muted); margin: 10px 4px 0; line-height: 1.4; }
+
+  /* задачи первого входа */
+  .task { background: var(--surface); border-radius: 24px; padding: 18px; margin-top: 12px; }
+  .task-step { font-size: 12.5px; color: var(--accent); font-weight: 600; margin-bottom: 6px; }
+  .task-title { font-weight: 700; font-size: 17px; margin-bottom: 6px; }
+  .task-text { font-size: 13.5px; color: var(--muted); line-height: 1.45; margin-bottom: 14px; }
+  .task input { background: var(--surface-2); }
+  .order-chip { margin-top: 12px; border: none; background: var(--accent); color: #000; border-radius: 20px; padding: 15px 18px; font-weight: 700; display: flex; justify-content: space-between; cursor: pointer; }
+  .order-chip b { color: #000; }
+
+  /* плитки главной */
+  .grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-top: 12px; }
+  .tile { background: var(--surface); border-radius: 26px; padding: 16px; position: relative; overflow: hidden; display: flex; flex-direction: column;
+    justify-content: space-between; cursor: pointer; border: none; color: var(--text); text-align: left; -webkit-tap-highlight-color: transparent; }
+  .tile:active { transform: scale(.98); }
+  .tile.big { grid-column: span 3; height: 150px; }
+  .tile.small { grid-column: span 2; height: 112px; border-radius: 22px; padding: 14px; }
+  .tile.wide { grid-column: span 3; height: 84px; flex-direction: row; align-items: center; justify-content: flex-start; gap: 12px; border-radius: 22px; }
+  .tile-title { font-weight: 700; font-size: 17px; line-height: 1.15; }
+  .tile.small .tile-title, .tile.wide .tile-title { font-size: 15px; }
+  .tile-sub { font-size: 12.5px; color: var(--muted); margin-top: 3px; line-height: 1.25; }
+  .tile.hot { background: #26240a; }
+  .tile.hot .tile-sub { color: var(--accent); }
+  .tile .ico { width: 32px; height: 32px; flex-shrink: 0; }
+  .tile.wide .ico { width: 40px; height: 40px; }
+  .tile .ico-xl { position: absolute; right: -10px; bottom: -12px; width: 96px; height: 96px; }
+  .vs { font-family: "Unbounded"; font-weight: 800; font-size: 26px; color: var(--accent); letter-spacing: -1px; line-height: 1; }
+  .dot { position: absolute; top: 14px; right: 14px; min-width: 22px; height: 22px; padding: 0 7px; border-radius: 11px; background: var(--accent); color: #000;
+    font-size: 12px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+  .h2 { font-family: "Unbounded"; font-weight: 600; font-size: 17px; margin: 24px 2px 12px; }
+  .promos { display: flex; gap: 10px; overflow-x: auto; margin: 0 -18px; padding: 0 18px; scrollbar-width: none; }
+  .promos::-webkit-scrollbar { display: none; }
+  .promo { flex: 0 0 210px; min-height: 104px; border-radius: 22px; padding: 14px; background: var(--surface); display: flex; flex-direction: column; justify-content: space-between; gap: 8px; cursor: pointer; }
+  .promo b { font-family: "Unbounded"; font-weight: 700; font-size: 20px; color: var(--accent); line-height: 1.1; }
+  .promo span { font-size: 13px; line-height: 1.3; color: var(--text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .links { background: var(--surface); border-radius: 22px; overflow: hidden; margin-top: 24px; }
+  .links button { width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 15px 16px; background: none; border: none;
+    border-bottom: 1px solid var(--border); color: var(--text); font-size: 15px; cursor: pointer; text-align: left; }
+  .links button:last-child { border-bottom: none; }
+  .links button svg { width: 18px; height: 18px; color: var(--muted-2); }
+
+  /* шапка разделов */
+  .bar { display: flex; align-items: center; justify-content: space-between; height: 44px; margin-bottom: 8px; }
+  .back { width: 42px; height: 42px; border-radius: 14px; background: var(--surface); border: none; color: var(--text); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  .back svg { width: 20px; height: 20px; }
+  .pill { background: var(--surface); border-radius: 14px; padding: 10px 13px; font-weight: 700; font-size: 14px; display: flex; align-items: center; gap: 7px; }
+  .pill i { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
+  .title { font-family: "Unbounded"; font-weight: 700; font-size: 30px; letter-spacing: -.5px; margin: 6px 2px 4px; line-height: 1.1; }
+  .lead { font-size: 14px; color: var(--muted); margin: 4px 2px 18px; line-height: 1.4; }
+
+  /* игры: меню */
+  .grow { background: var(--surface); border-radius: 22px; padding: 12px; display: flex; align-items: center; gap: 14px; margin-bottom: 10px; cursor: pointer; }
+  .grow-art { width: 64px; height: 64px; border-radius: 18px; background: var(--surface-2); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .grow-name { font-weight: 700; font-size: 16px; }
+  .grow-sub { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .grow .go { margin-left: auto; background: var(--accent); color: #000; border-radius: 14px; padding: 10px 14px; font-weight: 700; font-size: 14px; flex-shrink: 0; }
+  .grow .wait { margin-left: auto; color: var(--muted); font-size: 12.5px; text-align: right; flex-shrink: 0; line-height: 1.3; }
+  .bets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .betc { background: var(--surface); border-radius: 22px; height: 150px; padding: 12px; display: flex; flex-direction: column; justify-content: space-between; cursor: pointer; }
+  .betc b { font-weight: 700; font-size: 14px; line-height: 1.2; }
+  .betc span { font-family: "Unbounded"; font-weight: 700; font-size: 13px; color: var(--accent); }
+  .wide-cta { margin-top: 10px; background: var(--surface); border-radius: 22px; min-height: 76px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; }
+  #panel-play .game-card:not(.shown) { display: none !important; }
+  .game-card { background: var(--surface); }
+  .game-title { font-family: "Unbounded"; font-weight: 700; font-size: 20px; }
+
+  /* рейтинг */
+  .seg { display: flex; background: var(--surface); border-radius: 16px; padding: 4px; margin-bottom: 16px; }
+  .seg button { flex: 1; text-align: center; padding: 10px 0; border-radius: 12px; font-weight: 600; font-size: 14px; color: var(--muted); background: none; border: none; cursor: pointer; }
+  .seg button.on { background: var(--accent); color: #000; }
+  .podium { display: flex; align-items: flex-end; gap: 8px; min-height: 196px; margin-bottom: 12px; }
+  .pod { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; }
+  .pod .nick { font-weight: 700; font-size: 14px; margin-bottom: 3px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pod .vol { font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
+  .pod .col { width: 100%; border-radius: 18px 18px 6px 6px; display: flex; justify-content: center; padding-top: 12px; font-family: "Unbounded"; font-weight: 800; font-size: 26px; }
+  .pod.p1 .col { height: 126px; background: var(--accent); color: #000; }
+  .pod.p2 .col { height: 92px; background: var(--surface-2); }
+  .pod.p3 .col { height: 70px; background: var(--surface); }
+  .pod.me .nick { color: var(--accent); }
+  .pod.empty .nick { color: var(--muted-2); }
+  .prize { background: var(--surface); border-radius: 20px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+  .prize b { font-family: "Unbounded"; font-size: 16px; color: var(--accent); white-space: nowrap; }
+  .myplace { background: #24220a; border-radius: 20px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .myplace b { font-family: "Unbounded"; color: var(--accent); }
+  .rlist { background: var(--surface); border-radius: 22px; overflow: hidden; }
+  .rlist .rt-row { grid-template-columns: 34px 1fr auto; padding: 13px 16px; border-bottom: 1px solid var(--border); font-size: 15px; }
+  .rlist .rt-row:last-child { border-bottom: none; }
+  .rlist .rt-row .n { font-size: 13px; color: var(--muted); text-align: left; }
+  .rlist .rt-row .vol { color: var(--text); font-size: 14px; }
+  .rlist .rt-row.me { background: #24220a; }
+  .rlist .rt-row.me .n, .rlist .rt-row.me .vol { color: var(--accent); }
+  .rlist .rt-row.me .nick::after { content: ", это ты"; color: var(--muted); font-weight: 500; }
+
+  /* бронь */
+  .field-l { font-size: 13px; color: var(--muted); margin: 0 2px 8px; }
+  .days { display: flex; gap: 8px; overflow-x: auto; margin: 0 -18px 18px; padding: 0 18px; scrollbar-width: none; }
+  .days::-webkit-scrollbar { display: none; }
+  .day { flex: 0 0 auto; min-width: 64px; padding: 10px 12px; border-radius: 16px; background: var(--surface); border: none; color: var(--text); cursor: pointer; text-align: center; }
+  .day b { display: block; font-size: 15px; font-weight: 700; }
+  .day small { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .day.on { background: var(--accent); color: #000; }
+  .day.on small { color: rgba(0,0,0,.6); }
+  .twheel { position: relative; display: flex; justify-content: center; align-items: center; gap: 6px; background: var(--surface); border-radius: 24px; height: 220px; margin-bottom: 18px; overflow: hidden; }
+  .twheel::before { content: ""; position: absolute; left: 14px; right: 14px; top: 88px; height: 44px; border-radius: 14px; background: var(--surface-2); pointer-events: none; }
+  .twheel::after { content: ""; position: absolute; left: 0; right: 0; top: 0; bottom: 0; pointer-events: none;
+    background: linear-gradient(var(--surface) 0%, rgba(22,22,24,0) 34%, rgba(22,22,24,0) 66%, var(--surface) 100%); }
+  .wcol { position: relative; z-index: 1; width: 84px; height: 220px; overflow-y: scroll; scroll-snap-type: y mandatory; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .wcol::-webkit-scrollbar { display: none; }
+  .wcol div { height: 44px; line-height: 44px; text-align: center; font-family: "Unbounded"; font-weight: 600; font-size: 22px; color: var(--muted-2); scroll-snap-align: center; }
+  .wcol div.sel { color: var(--text); }
+  .wcol .pad { height: 88px; scroll-snap-align: none; }
+  .wsep { position: relative; z-index: 1; font-family: "Unbounded"; font-weight: 700; font-size: 22px; }
+  .zones { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 18px; }
+  .zone { background: var(--surface); border-radius: 20px; padding: 14px; height: 96px; display: flex; flex-direction: column; justify-content: space-between; border: 2px solid transparent; color: var(--text); cursor: pointer; text-align: left; }
+  .zone.on { border-color: var(--accent); }
+  .zone b { font-size: 15px; }
+  .zone svg { width: 30px; height: 30px; }
+  .stepper { display: flex; align-items: center; justify-content: space-between; background: var(--surface); border-radius: 18px; padding: 8px 8px 8px 16px; margin-bottom: 18px; }
+  .stepper .ctr { display: flex; align-items: center; gap: 14px; }
+  .stepper button { width: 42px; height: 42px; border-radius: 13px; background: var(--surface-2); border: none; color: var(--text); font-size: 20px; cursor: pointer; }
+  .stepper b { font-family: "Unbounded"; font-size: 18px; min-width: 22px; text-align: center; }
+  .bk-summary { font-size: 13.5px; color: var(--muted); text-align: center; margin: 10px 0 0; }
+
+  /* магазин */
+  .chips2 { display: flex; gap: 8px; overflow-x: auto; margin: 0 -18px 14px; padding: 0 18px; scrollbar-width: none; }
+  .chips2::-webkit-scrollbar { display: none; }
+  .chip2 { flex-shrink: 0; padding: 10px 14px; border-radius: 14px; background: var(--surface); font-size: 14px; font-weight: 600; color: var(--muted); border: none; cursor: pointer; }
+  .chip2.on { background: var(--text); color: #000; }
+  .shop-note { background: none; border: none; padding: 0; margin: 2px 2px 16px; font-size: 13px; color: var(--muted); line-height: 1.45; }
+  .shop-note b { color: var(--text); }
+  .shop-limit { margin-top: 4px; color: var(--muted); font-size: 13px; }
+  .pcard2 { border: none; border-radius: 22px; padding: 6px 6px 12px; }
+  .pimg { border-radius: 17px; }
+  .p18 { background: #000; top: 14px; left: 14px; border-radius: 7px; }
+  .pname { font-size: 14px; font-weight: 600; margin-top: 2px; }
+  .pprice { font-family: "Unbounded"; color: var(--text); font-size: 15px; }
+  .padd { width: 34px; height: 34px; border-radius: 12px; font-size: 22px; }
+  .cart-bar { bottom: calc(env(safe-area-inset-bottom, 0px) + 18px); border-radius: 20px; height: 60px; padding: 0 18px; }
+  .sheet { background: #111113; border-top: none; border-radius: 26px 26px 0 0; }
+  .sheet-title { font-family: "Unbounded"; font-weight: 700; }
+  .vchip { border: none; background: var(--surface-2); border-radius: 13px; }
+  .vchip.on { background: var(--accent); color: #000; }
+  .qty { border: none; background: var(--surface-2); border-radius: 13px; }
+  .qty button { background: transparent; }
+  .cline { border-bottom-color: var(--border); }
+
+
+  #tm-form .twheel::after { background: linear-gradient(var(--surface-2) 0%, rgba(34,34,38,0) 34%, rgba(34,34,38,0) 66%, var(--surface-2) 100%); }
+  #tm-form .twheel::before { background: #2e2e33; }
+  #tm-games .chip2 { background: var(--surface-2); }
+  #tm-games .chip2.on { background: var(--accent); color: #000; }
+  .chips2.wrap { flex-wrap: wrap; overflow: visible; margin: 0 0 14px; padding: 0; }
+  .chips2.wrap .chip2 { background: var(--surface-2); }
+  .chips2.wrap .chip2.on { background: var(--accent); color: #000; }
+  .visit-big { display: flex; align-items: baseline; gap: 10px; margin: 6px 2px 14px; }
+  .visit-big b { font-family: "Unbounded"; font-weight: 800; font-size: 56px; color: var(--accent); line-height: 1; }
+  .visit-big span { color: var(--muted); font-size: 14px; }
+  .steps { display: grid; gap: 8px; margin-bottom: 16px; }
+  .step { background: var(--surface); border-radius: 18px; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; }
+  .step b { font-family: "Unbounded"; font-size: 15px; }
+  .step span { font-size: 14px; color: var(--muted); }
+  .step.done { background: #24220a; }
+  .step.done span { color: var(--accent); font-weight: 700; }
+  .tpost { background: var(--surface); border-radius: 22px; padding: 14px 16px; margin-bottom: 10px; }
+  .tpost-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .tpost-game { font-family: "Unbounded"; font-weight: 700; font-size: 16px; }
+  .tpost-when { font-size: 13px; color: var(--accent); font-weight: 600; white-space: nowrap; }
+  .tpost-meta { font-size: 13.5px; color: var(--muted); margin: 6px 0 10px; line-height: 1.4; }
+  .tpost-meta a, .linkname { color: var(--text); font-weight: 600; text-decoration: none; cursor: pointer; }
+  .tpost-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .slots { display: flex; gap: 5px; }
+  .slots i { width: 14px; height: 14px; border-radius: 50%; background: var(--surface-2); }
+  .slots i.on { background: var(--accent); }
+  .tpost button { width: auto; padding: 10px 16px; font-size: 14px; }
+  .evc { background: var(--surface); border-radius: 24px; overflow: hidden; margin-bottom: 12px; }
+  .evc img { width: 100%; max-height: 240px; object-fit: cover; display: block; }
+  .evc-body { padding: 14px 16px 16px; }
+  .evc-date { display: flex; gap: 8px; align-items: baseline; margin-bottom: 6px; }
+  .evc-date b { font-family: "Unbounded"; font-weight: 800; font-size: 20px; color: var(--accent); }
+  .evc-date span { color: var(--muted); font-size: 13px; }
+  .evc-title { font-weight: 700; font-size: 17px; margin-bottom: 6px; }
+  .evc-desc { font-size: 14px; color: var(--muted); line-height: 1.45; margin-bottom: 12px; white-space: pre-line; }
+
+  /* афиша: постер-значок */
+  .evp { position: relative; height: 158px; overflow: hidden; padding: 16px; background: radial-gradient(circle at 84% 78%, var(--eg) 0, rgba(0,0,0,0) 62%), #17171a; }
+  .evp-chip { position: relative; z-index: 2; display: inline-flex; align-items: center; gap: 6px; background: var(--ec); color: #000; font-weight: 700; font-size: 12px; padding: 5px 11px 5px 8px; border-radius: 99px; }
+  .evp-chip svg { width: 15px; height: 15px; }
+  .evp-big { position: absolute; right: -18px; bottom: -26px; width: 176px; height: 176px; color: var(--ec); }
+  .evp-ghost { position: absolute; right: 120px; top: -40px; width: 120px; height: 120px; color: var(--ec); opacity: .08; transform: rotate(-14deg); }
+  .evp-date { position: absolute; left: 16px; bottom: 14px; z-index: 2; }
+  .evp-date b { display: block; font-family: "Unbounded"; font-weight: 800; font-size: 32px; line-height: 1; letter-spacing: -0.5px; }
+  .evp-date span { display: block; color: rgba(255,255,255,.62); font-size: 13px; margin-top: 6px; }
+  .evc-ph { position: relative; }
+  .evc-ph .evp-chip { position: absolute; left: 12px; top: 12px; }
+  /* бронь: схема зала */
+  .hall { position: relative; width: 100%; padding-top: 108%; background: #0e0e10; border: 1px solid var(--border); border-radius: 26px; margin-bottom: 10px; overflow: hidden; }
+  .hall-in { position: absolute; left: 10px; right: 10px; top: 12px; bottom: 12px; }
+  .h-area { position: absolute; border-radius: 14px; transition: opacity .2s; }
+  .h-lbl { position: absolute; font-size: 8.5px; font-weight: 700; letter-spacing: 2.4px; text-transform: uppercase; white-space: nowrap; transition: opacity .2s; }
+  .h-lbl.v { writing-mode: vertical-rl; letter-spacing: 3px; }
+  .h-deco { position: absolute; border: 1.5px solid #2b2b30; border-radius: 7px; }
+  .h-deco.sofa { border-top: 0; border-radius: 0 0 9px 9px; }
+  .h-deco.sofa.up { border-top: 1.5px solid #2b2b30; border-bottom: 0; border-radius: 9px 9px 0 0; }
+  .h-desk { position: absolute; background: #151518; border-radius: 14px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: #55555d; font-size: 9px; font-weight: 600; text-align: center; line-height: 1.25; }
+  .h-desk svg { width: 20px; height: 20px; }
+  .seat { position: absolute; padding: 0; border-radius: 8px; background: #1b1b1f; border: 1.5px solid; color: #fff; font-family: "Unbounded"; font-weight: 700; font-size: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: transform .15s, background .15s, opacity .2s, box-shadow .15s; -webkit-tap-highlight-color: transparent; }
+  .seat.tv { border-radius: 10px; font-size: 11px; }
+  .seat.tv small { display: block; font-family: "Geologica"; font-weight: 600; font-size: 7.5px; opacity: .6; letter-spacing: .5px; }
+  .seat.on { background: var(--accent); border-color: var(--accent); color: #000; transform: scale(1.08); box-shadow: 0 0 0 4px rgba(245,233,46,.18), 0 4px 18px rgba(245,233,46,.35); z-index: 3; }
+  .hall.focus .seat:not(.zf), .hall.focus .h-area:not(.zf), .hall.focus .h-lbl:not(.zf) { opacity: .28; }
+  .zchips { display: flex; gap: 8px; overflow-x: auto; margin: 0 -16px 10px; padding: 0 16px; scrollbar-width: none; }
+  .zchips::-webkit-scrollbar { display: none; }
+  .zchip { flex-shrink: 0; display: flex; align-items: center; gap: 7px; background: var(--surface); border: 1.5px solid transparent; color: var(--text); border-radius: 99px; padding: 8px 13px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .zchip i { width: 9px; height: 9px; border-radius: 3px; }
+  .zchip.on { border-color: var(--zc); }
+  .zinfo { background: var(--surface); border-radius: 20px; padding: 14px 16px; margin-bottom: 10px; }
+  .zinfo-h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .zinfo-h b { font-family: "Unbounded"; font-weight: 700; font-size: 15px; }
+  .zinfo-h span { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .zspecs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .zspecs span { background: #1d1d21; border-radius: 9px; padding: 6px 9px; font-size: 12px; color: #d8dae0; }
+  .zinfo-note { font-size: 12px; color: var(--muted); margin-top: 10px; line-height: 1.4; }
+  .bk-pick { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--surface); border-radius: 18px; padding: 12px 14px 12px 16px; margin-bottom: 18px; min-height: 52px; }
+  .bk-pick-t { font-size: 14px; line-height: 1.35; }
+  .bk-pick-t small { display: block; color: var(--muted); font-size: 12px; }
+  .bk-pick button { width: auto; background: #222226; color: var(--muted); border: 0; border-radius: 12px; padding: 8px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+  .badges { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .badge2 { background: var(--surface); border-radius: 16px; padding: 12px 14px; font-size: 13.5px; font-weight: 600; color: var(--muted-2); display: flex; align-items: center; gap: 8px; }
+  .badge2 i { width: 10px; height: 10px; border-radius: 50%; background: var(--surface-2); flex-shrink: 0; }
+  .badge2.on { color: var(--text); }
+  .badge2.on i { background: var(--accent); }
+  .pl-games { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 14px; }
+  .pl-games span { background: var(--surface); border-radius: 12px; padding: 8px 12px; font-size: 13.5px; font-weight: 600; }
+  .pod .nick, .rt-row .nick { cursor: pointer; }
+  /* прочее */
+  .gate { padding-top: 18px; }
+  .policy-box { border-top-color: var(--border); }
+  .bt-row, .mcard2 { border: none; }
+  #panel-battle .card, #panel-withdraw .card { border: none; }
+  .withdraw-amount .balance-value { font-family: "Unbounded"; }
+  .balance-value { font-family: "Unbounded"; }
 </style>
 </head>
 <body>
 
-<!-- ================= КАБИНЕТ ================= -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M5 5l14 14M19 5L5 19" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" fill="none"/></symbol>
+    <symbol id="i-o" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="3.4" fill="none"/></symbol>
+    <symbol id="i-flame" viewBox="0 0 24 24"><path d="M12 3c1 3.5 5 5.5 5 10a5 5 0 0 1-10 0c0-2.2 1.2-3.6 2.4-4.6.3 1.6 1 2.6 2.1 3.1C11 9 10.8 6 12 3Z" fill="currentColor"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
+    <symbol id="i-pc" viewBox="0 0 32 32"><rect x="3" y="5" width="26" height="17" rx="4" stroke="currentColor" stroke-width="2.4" fill="none"/><path d="M11 27h10M16 22v5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-pad" viewBox="0 0 32 32"><path d="M8 11h16a5 5 0 0 1 5 5l1 6a3.5 3.5 0 0 1-6 2.5L21 22H11l-3 2.5A3.5 3.5 0 0 1 2 22l1-6a5 5 0 0 1 5-5Z" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linejoin="round"/></symbol>
+  </defs>
+</svg>
+
+<!-- ================= ГЛАВНАЯ ================= -->
 <div class="panel active" id="panel-cabinet">
-  <div class="header-row">
-    <img src="logo-icon.jpg" alt="COLIZEUM">
-    <div>
-      <div class="header-title display">COLIZEUM</div>
-      <div class="header-sub">Саввинская</div>
-    </div>
+  <div class="top">
+    <div class="brand"><img src="logo-icon.jpg" alt=""><span>COLIZEUM</span></div>
+    <button class="avatar" id="avatar" onclick="showPanel('profile')" aria-label="Профиль">C</button>
   </div>
 
-  <h1 class="greeting display" id="greeting">Привет</h1>
-  <div class="sub">Это твой личный кабинет COLIZEUM</div>
-  <div class="nick-line hidden" id="nick-line">Никнейм: <b id="nick-value"></b><button id="nick-edit">изменить</button></div>
-
-  <div class="card balance-card">
-    <div>
-      <div class="balance-label">Баланс бонусов</div>
-      <div class="balance-value" id="balance-value">0</div>
+  <div class="pass" id="tier-card">
+    <div class="pass-head"><div class="pass-name" id="greeting">Гость</div><button class="pass-tier" id="tier-name" onclick="showPanel('profile')">—</button></div>
+    <div class="pass-band">
+      <svg><use href="#i-x"/></svg>
+      <div class="bal"><b id="balance-value">0</b><span id="balance-unit">колизов</span></div>
+      <svg><use href="#i-o"/></svg>
     </div>
-    <button class="primary" id="withdraw-open" disabled>Списать</button>
-  </div>
-  <div class="hint hidden" id="withdraw-hint" style="margin:-6px 4px 14px"></div>
-
-  <div class="card" id="tier-card">
-    <div class="tier-row">
-      <div><span class="tier-dot"></span><span class="tier-name" id="tier-name">—</span></div>
-      <div class="hint" id="tier-topup" style="margin:0"></div>
+    <div class="pass-foot">
+      <div class="pass-row">
+        <div class="burn" id="burn-line"></div>
+        <button class="btn-ink" id="withdraw-open" disabled>Списать</button>
+      </div>
+      <div class="prog"><div class="prog-track"><div class="prog-fill" id="progress-fill"></div></div><div class="prog-label" id="progress-label">Загружаем…</div></div>
     </div>
-    <div class="progress-track"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
-    <div class="progress-label" id="progress-label">Загружаем данные…</div>
   </div>
+  <div class="under-pass hidden" id="withdraw-hint"></div>
 
-  <div class="card hidden" id="phone-card">
-    <div class="step-tag">Шаг 1 из 2</div>
-    <div class="section-title" style="margin-top:0">Подтверди номер телефона</div>
-    <div class="gift-line hidden" id="phone-gift"></div>
-    <div class="empty-state" style="margin-bottom:14px">Telegram передаст номер, привязанный к твоему аккаунту. По нему найдём твой уровень в клубе — и откроются игры и списание бонусов.</div>
-    <button class="primary" id="share-phone">📱 Поделиться номером</button>
+  <div class="order-chip hidden" id="cab-order"><span>Заказ в магазине ждёт выдачи</span><b>Показать</b></div>
+
+  <div class="task hidden" id="phone-card">
+    <div class="task-step">Шаг 1 из 2</div>
+    <div class="task-title">Подтверди номер телефона</div>
+    <div class="task-text">По номеру найдём твой уровень в клубе — и откроются игры, магазин и списание. <span id="phone-gift"></span></div>
+    <button class="primary" id="share-phone">Поделиться номером</button>
     <div class="hint" id="share-phone-hint" style="text-align:center"></div>
   </div>
 
-  <div class="card hidden" id="nick-card">
-    <div class="step-tag" id="nick-step">Шаг 2 из 2</div>
-    <div class="section-title" style="margin-top:0" id="nick-title">Придумай никнейм</div>
-    <div class="gift-line hidden" id="nick-gift"></div>
-    <div class="empty-state" style="margin-bottom:12px">Под ним тебя увидят в рейтинге и в батлах. Имя и телефон другим гостям не показываются.</div>
+  <div class="task hidden" id="nick-card">
+    <div class="task-step" id="nick-step">Шаг 2 из 2</div>
+    <div class="task-title" id="nick-title">Придумай никнейм</div>
+    <div class="task-text">Под ним тебя увидят в рейтинге и батлах. <span id="nick-gift"></span></div>
     <input type="text" id="nick-input" maxlength="16" placeholder="Например, NightWolf" autocomplete="off">
     <button class="primary" id="nick-save">Сохранить</button>
     <div class="hint" id="nick-hint">3–16 символов: буквы, цифры, пробел, точка, дефис, подчёркивание</div>
   </div>
 
-  <div class="card invite-card hidden" id="invite-card">
-    <div>
-      <div class="invite-title">Пригласи друга</div>
-      <div class="invite-sub" id="invite-sub">+10 бонусов, когда друг подтвердит номер</div>
-    </div>
-    <button class="primary" id="invite-button">Отправить</button>
+  <div class="grid">
+    <button class="tile big hot" onclick="showPanel('activities')">
+      <div><div class="tile-title">Игры</div><div class="tile-sub" id="quick-games-sub">Рулетка, кости, дайс</div></div>
+      <svg class="ico-xl" viewBox="0 0 96 96"><rect x="14" y="14" width="56" height="56" rx="14" fill="#f5e92e" transform="rotate(-12 42 42)"/><circle cx="32" cy="34" r="5" fill="#000"/><circle cx="52" cy="30" r="5" fill="#000"/><circle cx="36" cy="54" r="5" fill="#000"/><circle cx="56" cy="50" r="5" fill="#000"/></svg>
+    </button>
+    <button class="tile big" onclick="showPanel('shop')">
+      <div><div class="tile-title">Магазин</div><div class="tile-sub">Напитки и сладкое</div></div>
+      <svg class="ico-xl" viewBox="0 0 96 96"><g transform="rotate(8 48 48)"><rect x="40" y="14" width="30" height="58" rx="8" fill="#3a3a40"/><rect x="40" y="30" width="30" height="20" fill="#f5e92e"/><rect x="45" y="9" width="20" height="7" rx="3" fill="#56565e"/></g><g transform="rotate(-18 40 66)"><rect x="8" y="56" width="58" height="20" rx="6" fill="#f5f5f2"/><rect x="16" y="56" width="10" height="20" fill="#d8d8d2"/><rect x="34" y="56" width="10" height="20" fill="#d8d8d2"/><rect x="52" y="56" width="10" height="20" fill="#d8d8d2"/></g></svg>
+    </button>
+    <button class="tile small" onclick="showPanel('booking')">
+      <svg class="ico" style="color:var(--accent)"><use href="#i-pc"/></svg>
+      <div class="tile-title">Бронь</div>
+    </button>
+    <button class="tile small" onclick="showPanel('rating')">
+      <svg class="ico" viewBox="0 0 32 32"><rect x="12" y="6" width="8" height="21" rx="2" fill="#f5e92e"/><rect x="3" y="13" width="8" height="14" rx="2" fill="#5a5a62"/><rect x="21" y="17" width="8" height="10" rx="2" fill="#5a5a62"/></svg>
+      <div><div class="tile-title">Рейтинг</div><div class="tile-sub" id="tile-rating-sub">призы</div></div>
+    </button>
+    <button class="tile small" onclick="showPanel('battle')">
+      <div class="vs">VS</div>
+      <div class="tile-title">Батл</div>
+      <div class="dot hidden" id="tile-battle-dot"></div>
+    </button>
+    <button class="tile wide" onclick="showPanel('team')">
+      <svg class="ico" viewBox="0 0 40 40"><rect x="4" y="12" width="32" height="18" rx="9" stroke="#f5e92e" stroke-width="2.4" fill="none"/><path d="M12 18v6M9 21h6" stroke="#f5e92e" stroke-width="2.4" stroke-linecap="round"/><circle cx="27" cy="19" r="1.8" fill="#f5e92e"/><circle cx="30" cy="23" r="1.8" fill="#5a5a62"/></svg>
+      <div><div class="tile-title">Тиммейты</div><div class="tile-sub" id="tile-team-sub">найди с кем играть</div></div>
+    </button>
+    <button class="tile wide" onclick="showPanel('events')">
+      <svg class="ico" id="tile-events-ico" viewBox="0 0 40 40"><rect x="6" y="8" width="28" height="26" rx="6" stroke="#f5e92e" stroke-width="2.4" fill="none"/><path d="M6 16h28M14 5v6M26 5v6" stroke="#f5e92e" stroke-width="2.4" stroke-linecap="round"/><rect x="12" y="21" width="7" height="6" rx="1.5" fill="#5a5a62"/></svg>
+      <div><div class="tile-title">Афиша</div><div class="tile-sub" id="tile-events-sub">события клуба</div></div>
+    </button>
+    <button class="tile wide hidden" id="ci-card">
+      <svg class="ico" viewBox="0 0 40 40"><path d="M10 5h20v30l-3.3-2.5L23.3 35 20 32.5 16.7 35l-3.4-2.5L10 35Z" stroke="#f5e92e" stroke-width="2.4" fill="none" stroke-linejoin="round"/><path d="M15 18l3.5 3.5L25 15" stroke="#f5e92e" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <div><div class="tile-title" id="ci-title">Я в клубе</div><div class="tile-sub" id="ci-sub">+30 за чек</div></div>
+    </button>
+    <button class="tile wide hidden" id="invite-card">
+      <svg class="ico" viewBox="0 0 40 40"><circle cx="15" cy="15" r="6" stroke="#f5e92e" stroke-width="2.4" fill="none"/><circle cx="27" cy="17" r="5" stroke="#5a5a62" stroke-width="2.4" fill="none"/><path d="M5 33c1.5-5.5 5.5-8 10-8s8.5 2.5 10 8M24 26c4.5 0 8 2 10 7" stroke="#f5e92e" stroke-width="2.4" fill="none" stroke-linecap="round"/></svg>
+      <div><div class="tile-title">Друзья</div><div class="tile-sub" id="invite-sub">+50 за друга</div></div>
+    </button>
   </div>
+  <input type="file" id="ci-file" accept="image/*" class="hidden">
 
-  <div class="section-title">Как устроены уровни</div>
-  <div class="card tier-list" id="tier-list" style="padding:0">
-    <div class="empty-state" style="padding:16px">Загружаем…</div>
+  <div class="h2">Акции</div>
+  <div class="promos" id="promos-strip"></div>
+
+  <div class="links">
+    <button onclick="showPanel('profile')">Профиль и уровни<svg><use href="#i-chev"/></svg></button>
+    <button onclick="showPanel('promotions')">Все акции клуба<svg><use href="#i-chev"/></svg></button>
+    <button onclick="openPolicy()">Политика обработки данных<svg><use href="#i-chev"/></svg></button>
   </div>
-  <div class="hint" style="margin-bottom:18px">Уровень считается по средним пополнениям счёта в клубе за месяц</div>
+</div>
 
-  <div class="quick-row">
-    <div class="quick-card" onclick="showPanel('activities')">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="3"/><circle cx="9" cy="9" r="1" fill="var(--accent)" stroke="none"/><circle cx="15" cy="15" r="1" fill="var(--accent)" stroke="none"/><circle cx="12" cy="12" r="1" fill="var(--accent)" stroke="none"/></svg>
-      <div><div class="quick-title">Активности</div><div class="quick-sub" id="quick-games-sub">Рулетка, кости, дайс</div></div>
-    </div>
-    <div class="quick-card" onclick="showPanel('promotions')">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="1.5"/><path d="M4 10h16"/><path d="M12 10v10"/><path d="M12 10c-1.5-4-6-4-6-1.2C6 10 8 10 12 10Z"/><path d="M12 10c1.5-4 6-4 6-1.2C18 10 16 10 12 10Z"/></svg>
-      <div><div class="quick-title">Акции клуба</div><div class="quick-sub">Посмотреть</div></div>
-    </div>
+<!-- ================= ПРОФИЛЬ ================= -->
+<div class="panel" id="panel-profile">
+  <div class="bar"><button class="back" data-back><svg><use href="#i-back"/></svg></button><div class="pill"><i></i><span class="bal-val">0</span></div></div>
+  <div class="title" id="prof-nick">Профиль</div>
+  <div class="lead" id="prof-phone"></div>
+  <div class="card" style="margin-bottom:14px">
+    <div class="field-l">Никнейм</div>
+    <input type="text" id="prof-nick-input" maxlength="16" placeholder="Например, NightWolf" autocomplete="off">
+    <button class="secondary" id="prof-nick-save">Сменить никнейм</button>
+    <div class="hint" id="prof-nick-hint">Менять можно раз в сутки</div>
   </div>
-
-  <div class="booking-cta" onclick="showPanel('booking')">
-    <div><div class="booking-cta-title">Быстрое бронирование</div><div class="booking-cta-sub">Имя, телефон, время — за 20 секунд</div></div>
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+  <div class="card" style="margin-bottom:14px">
+    <div class="field-l">О себе</div>
+    <textarea id="prof-about" maxlength="200" placeholder="Во что играешь, когда бываешь в клубе, ищешь ли команду" style="background:var(--surface-2)"></textarea>
+    <div class="field-l">Любимые игры</div>
+    <div class="chips2 wrap" id="prof-games"></div>
+    <div class="field-l">Ранг</div>
+    <input type="text" id="prof-rank" maxlength="30" placeholder="Например, Faceit 8 или Легенда 2" style="background:var(--surface-2)">
+    <button class="secondary" id="prof-save">Сохранить профиль</button>
   </div>
-
-  <div class="section-title">Есть идея?</div>
-  <div class="card">
-    <div class="empty-state" style="margin-bottom:10px">Расскажи, что улучшить в клубе — читаем каждое сообщение.</div>
-    <textarea id="idea-text" placeholder="Например: добавить ещё один вид напитков"></textarea>
-    <button class="primary" id="idea-submit">Отправить</button>
-  </div>
-
-  <button class="link-btn footer-link" onclick="openPolicy()">Политика обработки персональных данных</button>
+  <div class="h2" style="margin-top:6px">Значки</div>
+  <div class="badges" id="prof-badges"></div>
+  <div class="h2">Уровни</div>
+  <div class="card tier-list" id="tier-list" style="padding:0"><div class="empty-state" style="padding:16px">Загружаем…</div></div>
+  <div class="hint" style="margin:8px 4px 0">Уровень считается по средним пополнениям счёта в клубе за месяц</div>
+  <div class="h2">Предложить идею</div>
+  <textarea id="idea-text" placeholder="Что улучшить в клубе"></textarea>
+  <button class="secondary" id="idea-submit">Отправить</button>
 </div>
 
 <!-- ================= ПОЛИТИКА ================= -->
 <div class="panel" id="panel-policy">
-  <button class="back-link" onclick="showPanel('cabinet')">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
-    Назад в кабинет
-  </button>
-  <h1 class="greeting display" style="font-size:20px">Политика обработки персональных данных</h1>
+  <div class="bar"><button class="back" data-back><svg><use href="#i-back"/></svg></button><div></div></div>
+  <div class="title" style="font-size:22px">Политика обработки данных</div>
   <div class="policy-box" id="policy-full" style="border-top:none"><div class="empty-state">Загружаем…</div></div>
 </div>
 
-<!-- ================= СОГЛАСИЕ (экран при первом входе) ================= -->
+<!-- ================= СОГЛАСИЕ ================= -->
 <div class="gate hidden" id="consent-gate">
-  <div class="header-row">
-    <img src="logo-icon.jpg" alt="COLIZEUM">
-    <div>
-      <div class="header-title display">COLIZEUM</div>
-      <div class="header-sub">Саввинская</div>
-    </div>
-  </div>
-  <h1 class="greeting display">Добро пожаловать</h1>
-  <div class="sub">Перед входом в личный кабинет нужно согласие на обработку персональных данных</div>
-
+  <div class="top"><div class="brand"><img src="logo-icon.jpg" alt=""><span>COLIZEUM</span></div><div></div></div>
+  <div class="title">Добро пожаловать</div>
+  <div class="lead">Перед входом нужно согласие на обработку персональных данных</div>
   <div class="card">
     <div class="consent-text" id="consent-text">Загружаем…</div>
-    <button class="link-btn" id="policy-toggle">Читать политику обработки данных ›</button>
+    <button class="link-btn" id="policy-toggle">Читать политику обработки данных</button>
     <div class="policy-box hidden" id="policy-box"></div>
   </div>
-
   <label class="check-row">
     <input type="checkbox" id="consent-check">
     <span>Я прочитал(а) текст и даю согласие на обработку моих персональных данных</span>
@@ -618,73 +1155,81 @@
   <button class="primary" id="consent-submit" disabled>Продолжить</button>
 </div>
 
-<!-- ================= СПИСАНИЕ БОНУСОВ ================= -->
+<!-- ================= СПИСАНИЕ ================= -->
 <div class="panel" id="panel-withdraw">
-  <button class="back-link" onclick="showPanel('cabinet')">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
-    Назад в кабинет
-  </button>
-  <h1 class="greeting display" style="font-size:22px">Списание бонусов</h1>
-  <div class="sub">Бонусы из приложения перейдут на твою карту гостя клуба</div>
-
+  <div class="bar"><button class="back" data-back><svg><use href="#i-back"/></svg></button><div class="pill"><i></i><span class="bal-val">0</span></div></div>
+  <div class="title">Списание</div>
+  <div class="lead">Колизы перейдут бонусами на твою карту гостя клуба</div>
   <div class="card withdraw-amount">
     <div class="balance-label">К списанию</div>
     <div class="balance-value" id="withdraw-amount">0</div>
-    <div class="balance-unit" id="withdraw-rules">бонусов</div>
+    <div class="balance-unit" id="withdraw-rules">колизов</div>
   </div>
-
-  <label class="field-label" for="w-name">Имя</label>
+  <div class="field-l">Имя</div>
   <input type="text" id="w-name" placeholder="Например, Игорь">
-
-  <label class="field-label" for="w-phone">Телефон, на который начислить бонусы</label>
+  <div class="field-l">Телефон</div>
   <input type="tel" id="w-phone" readonly style="opacity:.7">
-  <div class="hint" style="margin:-6px 0 14px">Бонусы начисляются только на номер, подтверждённый через Telegram</div>
-
   <button class="primary" id="withdraw-submit">Отправить заявку</button>
-  <div class="hint" style="text-align:center">Администратор получит заявку сразу и начислит бонусы на карту</div>
+  <div class="hint" style="text-align:center">Администратор начислит бонусы на карту, номер — только подтверждённый через Telegram</div>
 </div>
 
 <!-- ================= АКЦИИ ================= -->
 <div class="panel" id="panel-promotions">
-  <div class="header-row">
-    <img src="logo-icon.jpg" alt="COLIZEUM">
-    <div>
-      <div class="header-title display">COLIZEUM</div>
-      <div class="header-sub">Саввинская</div>
-    </div>
-  </div>
-  <h1 class="greeting display" style="font-size:22px">Акции клуба</h1>
-  <div class="sub">Доступны всем гостям — независимо от уровня</div>
-  <div id="promotions-list"><div class="empty-state">Загружаем акции…</div></div>
+  <div class="bar"><button class="back" data-back><svg><use href="#i-back"/></svg></button><div></div></div>
+  <div class="title">Акции</div>
+  <div class="lead">Для всех гостей, независимо от уровня</div>
+  <div id="promotions-list"><div class="empty-state">Загружаем…</div></div>
 </div>
 
-<!-- ================= АКТИВНОСТИ ================= -->
+<!-- ================= ИГРЫ: МЕНЮ ================= -->
 <div class="panel" id="panel-activities">
-  <div class="header-row">
-    <img src="logo-icon.jpg" alt="COLIZEUM">
-    <div>
-      <div class="header-title display">COLIZEUM</div>
-      <div class="header-sub">Саввинская</div>
+  <div class="bar"><button class="back" data-back><svg><use href="#i-back"/></svg></button><div class="pill"><i></i><span class="bal-val" id="games-balance">0</span></div></div>
+  <div class="title">Игры</div>
+  <div class="lead">Бесплатные — раз в сутки. Остальные на колизы.</div>
+
+  <div class="grow" data-play="g-roulette">
+    <div class="grow-art"><svg width="42" height="42" viewBox="0 0 42 42"><circle cx="21" cy="21" r="17" fill="#f5e92e"/><path d="M21 4v34M4 21h34M9 9l24 24M33 9L9 33" stroke="#000" stroke-width="2"/><circle cx="21" cy="21" r="5" fill="#000"/></svg></div>
+    <div><div class="grow-name">Рулетка</div><div class="grow-sub">10–80 колизов</div></div>
+    <div class="go" id="row-spin">Крутить</div>
+  </div>
+  <div class="grow" data-play="g-dice">
+    <div class="grow-art"><svg width="40" height="40" viewBox="0 0 40 40"><rect x="5" y="5" width="30" height="30" rx="8" fill="#f5e92e"/><circle cx="13" cy="13" r="3" fill="#000"/><circle cx="20" cy="20" r="3" fill="#000"/><circle cx="27" cy="27" r="3" fill="#000"/></svg></div>
+    <div><div class="grow-name">Кости</div><div class="grow-sub" id="row-dice-sub">×10 за каждое очко</div></div>
+    <div class="go" id="row-dice">Бросить</div>
+  </div>
+  <div class="grow" data-play="g-prob">
+    <div class="grow-art"><svg width="40" height="40" viewBox="0 0 40 40"><path d="M6 30a14 14 0 0 1 28 0" stroke="#5a5a62" stroke-width="5" fill="none" stroke-linecap="round"/><path d="M6 30a14 14 0 0 1 9-13" stroke="#f5e92e" stroke-width="5" fill="none" stroke-linecap="round"/><circle cx="20" cy="30" r="3" fill="#f5e92e"/></svg></div>
+    <div><div class="grow-name">Дайс</div><div class="grow-sub">Сам выбираешь шанс</div></div>
+    <div class="go" id="row-prob">Играть</div>
+  </div>
+
+  <div class="h2">На колизы</div>
+  <div class="bets">
+    <div class="betc" data-play="g-crash">
+      <svg width="64" height="54" viewBox="0 0 64 54"><path d="M4 50C24 48 38 40 58 6" stroke="#f5e92e" stroke-width="4" fill="none" stroke-linecap="round"/><circle cx="58" cy="6" r="5" fill="#ff6a3d"/></svg>
+      <div><b>Crash</b><br><span>до ×10</span></div>
+    </div>
+    <div class="betc" data-play="g-slots">
+      <svg width="64" height="54" viewBox="0 0 64 54"><rect x="2" y="10" width="18" height="34" rx="5" fill="#2c2c31"/><rect x="23" y="10" width="18" height="34" rx="5" fill="#2c2c31"/><rect x="44" y="10" width="18" height="34" rx="5" fill="#2c2c31"/><path d="M11 21l2.6 5.3 5.4.8-3.9 3.8.9 5.4-5-2.6-5 2.6.9-5.4L3 27.1l5.4-.8Z" fill="#f5e92e"/><path d="M32 21l2.6 5.3 5.4.8-3.9 3.8.9 5.4-5-2.6-5 2.6.9-5.4-3.9-3.8 5.4-.8Z" fill="#f5e92e"/><path d="M53 21l2.6 5.3 5.4.8-3.9 3.8.9 5.4-5-2.6-5 2.6.9-5.4-3.9-3.8 5.4-.8Z" fill="#f5e92e"/></svg>
+      <div><b>Слот</b><br><span>до ×20</span></div>
+    </div>
+    <div class="betc" data-play="g-hilo">
+      <svg width="64" height="54" viewBox="0 0 64 54"><rect x="6" y="8" width="26" height="38" rx="5" fill="#f5f5f2" transform="rotate(-10 19 27)"/><rect x="28" y="6" width="26" height="38" rx="5" fill="#f5e92e" transform="rotate(8 41 25)"/><text x="12" y="34" font-family="Unbounded" font-weight="800" font-size="14" fill="#000" transform="rotate(-10 19 27)">K</text><text x="35" y="31" font-family="Unbounded" font-weight="800" font-size="14" fill="#000" transform="rotate(8 41 25)">A</text></svg>
+      <div><b>Больше-меньше</b><br><span>до ×12</span></div>
     </div>
   </div>
-  <h1 class="greeting display" style="font-size:22px">Активности</h1>
-  <div class="sub">Бесплатные игры — раз в 24 часа. Игры на бонусы — сколько хочешь, пока есть баланс.</div>
-
-  <div class="games-nav">
-    <div class="nav-balance">💰 <span id="games-balance">0</span></div>
-    <button class="nav-chip" data-go="g-roulette">Рулетка</button>
-    <button class="nav-chip" data-go="g-dice">Кости</button>
-    <button class="nav-chip" data-go="g-prob">Дайс</button>
-    <button class="nav-chip" data-go="g-crash">Crash</button>
-    <button class="nav-chip" data-go="g-slots">Слот</button>
-    <button class="nav-chip" data-go="g-hilo">Больше-меньше</button>
+  <div class="wide-cta" onclick="showPanel('battle')">
+    <div><div class="grow-name">Батл с другом</div><div class="grow-sub">21, Crash-дуэль, покер</div></div>
+    <div class="vs" style="font-size:22px">VS</div>
   </div>
+</div>
 
-  <div class="games-section">Бесплатно каждый день</div>
-
+<!-- ================= ИГРА ================= -->
+<div class="panel" id="panel-play">
+  <div class="bar"><button class="back" data-back><svg><use href="#i-back"/></svg></button><div class="pill"><i></i><span class="bal-val">0</span></div></div>
   <!-- Рулетка -->
   <div class="card roulette-card game-card" id="g-roulette">
-    <div class="game-head"><div class="game-title">Рулетка</div><div class="game-tag">10–80 бонусов</div></div>
+    <div class="game-head"><div class="game-title">Рулетка</div><div class="game-tag">10–80 колизов</div></div>
     <div class="wheel-wrap">
       <div class="wheel" id="wheel"></div>
       <div class="wheel-pointer"></div>
@@ -701,7 +1246,7 @@
 
   <!-- Кости -->
   <div class="card game-card" id="g-dice" style="display:flex;flex-direction:column;align-items:center;gap:12px">
-    <div class="game-head"><div class="game-title">Кости на баланс</div><div class="game-tag" id="dice-tag">×10 бонусов</div></div>
+    <div class="game-head"><div class="game-title">Кости на баланс</div><div class="game-tag" id="dice-tag">×10 колизов</div></div>
     <div class="dice-face" id="dice-face"><span id="dice-label">–</span></div>
     <div class="result-value hidden" id="dice-bonus" style="font-size:13px"></div>
     <button class="primary" id="dice-button">Бросить бесплатно</button>
@@ -720,14 +1265,14 @@
 
     <div class="btn-row">
       <button class="primary" id="prob-button">Бесплатно</button>
-      <button class="secondary" id="bet-toggle">На бонусы</button>
+      <button class="secondary" id="bet-toggle">На колизы</button>
     </div>
     <div class="hint" id="prob-hint"></div>
 
     <div class="bet-box hidden" id="bet-box">
       <label class="field-label" for="bet-stake">Ставка (на балансе <span id="bet-balance">0</span>)</label>
       <div class="stake-row">
-        <input type="number" id="bet-stake" min="1" step="1" inputmode="numeric" placeholder="Сколько бонусов ставишь">
+        <input type="number" id="bet-stake" min="1" step="1" inputmode="numeric" placeholder="Сколько колизов ставишь">
         <button class="secondary" id="bet-all">Всё</button>
       </div>
       <div class="payout-line" id="bet-payout">Введи ставку</div>
@@ -739,7 +1284,6 @@
       <div class="result-value" id="prob-result-text"></div>
     </div>
   </div>
-  <div class="games-section">Только на бонусы</div>
 
   <!-- Crash -->
   <div class="card game-card" id="g-crash">
@@ -749,7 +1293,7 @@
       <canvas id="crash-canvas"></canvas>
       <div class="crash-center">
         <div class="crash-mult" id="crash-mult">×1.00</div>
-        <div class="crash-sub" id="crash-sub">Ставь бонусы и забирай, пока не крашнулось</div>
+        <div class="crash-sub" id="crash-sub">Ставь колизы и забирай, пока не крашнулось</div>
       </div>
     </div>
     <div class="stake-row">
@@ -762,7 +1306,7 @@
     <button class="primary" id="crash-button">Поставить</button>
     <div class="hint" id="crash-hint"></div>
     <details class="rules"><summary>Как играть</summary>
-      <p>Ставишь бонусы — коэффициент начинает расти от ×1.00. Нажми «Забрать» до краха, и получишь ставку × коэффициент. Не успел — ставка сгорает. Момент краха случайный и определяется заранее, в момент ставки. Примерно половина раундов крашится, не дойдя до ×2. На ×10 ставка забирается автоматически.</p>
+      <p>Ставишь колизы — коэффициент начинает расти от ×1.00. Нажми «Забрать» до краха, и получишь ставку × коэффициент. Не успел — ставка сгорает. Момент краха случайный и определяется заранее, в момент ставки. Примерно половина раундов крашится, не дойдя до ×2. На ×10 ставка забирается автоматически.</p>
     </details>
   </div>
 
@@ -820,33 +1364,27 @@
     <div class="game-result" id="hilo-result"></div>
     <div class="hint" id="hilo-hint"></div>
     <details class="rules"><summary>Как играть</summary>
-      <p>Ставишь бонусы — клуб открывает свою карту. Угадай, будет твоя карта старше или младше. Чем меньше шанс, тем выше коэффициент — он виден на кнопке до выбора. Старшинство: 2, 3 … 10, J, Q, K, A. Карта того же достоинства — проигрыш.</p>
+      <p>Ставишь колизы — клуб открывает свою карту. Угадай, будет твоя карта старше или младше. Чем меньше шанс, тем выше коэффициент — он виден на кнопке до выбора. Старшинство: 2, 3 … 10, J, Q, K, A. Карта того же достоинства — проигрыш.</p>
     </details>
   </div>
+
 </div>
 
 <!-- ================= БАТЛ ================= -->
 <div class="panel" id="panel-battle">
-  <div class="header-row">
-    <img src="logo-icon.jpg" alt="COLIZEUM">
-    <div>
-      <div class="header-title display">COLIZEUM</div>
-      <div class="header-sub">Саввинская</div>
-    </div>
-  </div>
-
+  <div class="bar"><button class="back" data-back><svg><use href="#i-back"/></svg></button><div class="pill"><i></i><span class="bal-val">0</span></div></div>
   <div id="battle-locked" class="card hidden">
     <div class="empty-state">Батлы доступны после подтверждения номера телефона — сделай это в кабинете.</div>
   </div>
 
   <div id="battle-home">
     <h1 class="greeting display" style="font-size:22px">Батл</h1>
-    <div class="sub">Вызови друга из клуба и сыграйте друг против друга на бонусы. Клуб берёт 5% с банка.</div>
+    <div class="sub">Вызови друга из клуба и сыграйте друг против друга на колизы. Клуб берёт 5% с банка.</div>
 
     <div class="card">
       <div class="section-title" style="margin-top:0">Вызвать друга</div>
       <input type="tel" id="bt-phone" placeholder="Номер друга, например 8 916 123-45-67" inputmode="tel">
-      <button class="primary" id="bt-invite">⚔️ Вызвать на батл</button>
+      <button class="primary" id="bt-invite">Вызвать на батл</button>
       <div class="hint">Вызов придёт другу в бот, если он подтвердил там номер. Не в боте — <a href="#" id="bt-invite-ref" style="color:var(--accent)">отправь ему приглашение</a>.</div>
     </div>
 
@@ -857,9 +1395,9 @@
 
     <div class="section-title">Игры</div>
     <div class="card">
-      <div class="empty-state"><b style="color:#fff">🃏 21</b> — набери ближе к 21, чем соперник, но не больше. Карты соперника видно в конце.</div>
-      <div class="empty-state" style="margin-top:10px"><b style="color:#fff">📈 Crash-дуэль</b> — одна кривая на двоих. Кто забрал на большем коэффициенте до краха — забирает банк. Когда забрал соперник, не видно.</div>
-      <div class="empty-state" style="margin-top:10px"><b style="color:#fff">♠️ Покер</b> — техасский холдем один на один. Каждый садится со своим стеком, играете раздачу за раздачей, пока у кого-то не кончатся фишки или кто-то не встанет из-за стола.</div>
+      <div class="empty-state"><b style="color:#fff">21</b> — набери ближе к 21, чем соперник, но не больше. Карты соперника видно в конце.</div>
+      <div class="empty-state" style="margin-top:10px"><b style="color:#fff">Crash-дуэль</b> — одна кривая на двоих. Кто забрал на большем коэффициенте до краха — забирает банк. Когда забрал соперник, не видно.</div>
+      <div class="empty-state" style="margin-top:10px"><b style="color:#fff">Покер</b> — техасский холдем один на один. Каждый садится со своим стеком, играете раздачу за раздачей, пока у кого-то не кончатся фишки или кто-то не встанет из-за стола.</div>
     </div>
   </div>
 
@@ -869,7 +1407,7 @@
       Все батлы
     </button>
     <div class="room-head">
-      <div><div class="room-vs">Ты <span>⚔️</span> <span id="room-opp" style="color:#fff">…</span></div><div class="room-bal" id="room-bal"></div></div>
+      <div><div class="room-vs">Ты <span></span> <span id="room-opp" style="color:#fff">…</span></div><div class="room-bal" id="room-bal"></div></div>
       <button class="link-danger" id="room-leave">Выйти</button>
     </div>
 
@@ -935,9 +1473,9 @@
     <div class="card hidden" id="room-select">
       <div class="section-title" style="margin-top:0" id="select-title">Выбери игру и ставку</div>
       <div class="gtiles">
-        <button class="gtile on" data-game="blackjack"><span class="gi">🃏</span><b>21</b><small>кто ближе к 21</small></button>
-        <button class="gtile" data-game="crash"><span class="gi">📈</span><b>Crash</b><small>кто дольше</small></button>
-        <button class="gtile" data-game="poker"><span class="gi">♠️</span><b>Покер</b><small>холдем 1 на 1</small></button>
+        <button class="gtile on" data-game="blackjack"><span class="gi">♥</span><b>21</b><small>кто ближе к 21</small></button>
+        <button class="gtile" data-game="crash"><span class="gi">×10</span><b>Crash</b><small>кто дольше</small></button>
+        <button class="gtile" data-game="poker"><span class="gi">♠</span><b>Покер</b><small>холдем 1 на 1</small></button>
       </div>
       <label class="field-label" for="sel-stake" id="sel-stake-label">Ставка</label>
       <div class="stake-row"><input type="number" id="sel-stake" inputmode="numeric"><button class="secondary" id="sel-max">Макс</button></div>
@@ -945,99 +1483,152 @@
       <button class="primary" id="sel-propose">Предложить</button>
     </div>
   </div>
+
 </div>
 
 <!-- ================= РЕЙТИНГ ================= -->
 <div class="panel" id="panel-rating">
-  <div class="header-row">
-    <img src="logo-icon.jpg" alt="COLIZEUM">
-    <div>
-      <div class="header-title display">COLIZEUM</div>
-      <div class="header-sub">Саввинская</div>
+  <div class="bar"><button class="back" data-back><svg><use href="#i-back"/></svg></button><div class="pill"><i></i><span class="bal-val">0</span></div></div>
+  <div class="title">Рейтинг</div>
+  <div class="lead" id="rt-sub">Загружаем…</div>
+  <div class="seg" id="rt-tabs"><button class="on" data-tab="volume">Игроки</button><button data-tab="friendly">Дружелюбные</button></div>
+
+  <div id="rt-volume">
+    <div class="podium" id="rt-podium"></div>
+    <div class="prize"><span id="rt-prize-sub">Приз за 1 место</span><b id="rt-prize">3 000</b></div>
+    <div class="myplace hidden" id="rt-me"><span>Ты на <b id="rt-my-place">—</b> месте</span><span>оборот <b id="rt-my-vol">0</b></span></div>
+    <div class="card hidden" id="rt-need-nick">
+      <div class="empty-state" style="margin-bottom:12px">Чтобы попасть в рейтинг, подтверди номер и придумай никнейм.</div>
+      <button class="primary" data-back>На главную</button>
+    </div>
+    <div class="rlist" id="rt-list"></div>
+    <div class="hint" style="margin:10px 4px 0">Оборот — выигрыши в бесплатных играх и все ставки на колизы, даже проигранные. Приз — на карту гостя клуба.</div>
+    <div id="rt-last-wrap" class="hidden">
+      <div class="h2" id="rt-last-title">Итоги прошлого месяца</div>
+      <div class="rlist" id="rt-last"></div>
     </div>
   </div>
-  <h1 class="greeting display" style="font-size:22px">Рейтинг</h1>
-  <div class="sub" id="rt-sub">Загружаем…</div>
 
-  <div class="card prize-card">
-    <div class="cup">🏆</div>
-    <div><b id="rt-prize">1 место — 3 000 бонусов</b><small id="rt-prize-sub">Победитель месяца получает приз на баланс автоматически.</small></div>
+  <div id="rt-friendly" class="hidden">
+    <div class="podium" id="fr-podium"></div>
+    <div class="prize"><span id="fr-prize-sub">Приз за 1 место</span><b id="fr-prize">1 000</b></div>
+    <div class="myplace"><span>Ты на <b id="fr-my-place">—</b> месте</span><span>друзей <b id="fr-my-cnt">0</b></span></div>
+    <button class="primary" id="fr-invite" style="margin-bottom:12px">Пригласить друга</button>
+    <div class="rlist" id="fr-list"></div>
+    <div class="hint" style="margin:10px 4px 0">Друг засчитывается, когда открыл кабинет по твоей ссылке и подтвердил свой номер. За друга +<span class="ref-b1">50</span> колизов сразу и +<span class="ref-b2">100</span>, когда он впервые пополнит счёт.</div>
+    <div id="fr-last-wrap" class="hidden">
+      <div class="h2" id="fr-last-title">Итоги прошлого месяца</div>
+      <div class="rlist" id="fr-last"></div>
+    </div>
   </div>
+</div>
 
-  <div class="card rt-me" id="rt-me">
-    <div><div class="mini-label" style="margin:0">Твоё место</div><div class="place" id="rt-my-place">—</div></div>
-    <div style="text-align:right"><div class="mini-label" style="margin:0">Оборот за месяц</div><div class="total-badge" id="rt-my-vol" style="font-size:16px">0</div></div>
-  </div>
-  <div class="card hidden" id="rt-need-nick">
-    <div class="empty-state" style="margin-bottom:12px">Чтобы попасть в рейтинг, подтверди номер и придумай никнейм в кабинете.</div>
-    <button class="primary" onclick="showPanel('cabinet')">Перейти в кабинет</button>
-  </div>
 
-  <div class="section-title">Топ месяца</div>
-  <div class="card" style="padding:0" id="rt-list"><div class="empty-state" style="padding:16px">Загружаем…</div></div>
-  <div class="hint" style="margin:-4px 4px 14px">Считается оборот: выигрыши в бесплатных играх + все ставки в играх на бонусы и в батлах. Даже если ставка проиграна — она идёт в зачёт.</div>
+<!-- ================= ВИЗИТЫ ================= -->
+<div class="panel" id="panel-visits">
+  <div class="bar"><button class="back" data-back><svg><use href="#i-back"/></svg></button><div class="pill"><i></i><span class="bal-val">0</span></div></div>
+  <div class="title">Визиты</div>
+  <div class="lead">Пришёл в клуб — сфотографируй чек. За серию визитов в месяц — награды.</div>
+  <div class="visit-big"><b id="vs-count">0</b><span id="vs-count-label">визитов в этом месяце</span></div>
+  <div class="steps" id="vs-steps"></div>
+  <button class="primary" id="vs-upload">Отметиться: фото чека</button>
+  <div class="hint" id="vs-status" style="text-align:center"></div>
+  <div class="hint" style="margin:14px 4px 0">Чек подтверждает администратор. Отмечаться можно раз в день — попроси чек на стойке, если его не выдали.</div>
+</div>
 
-  <div id="rt-last-wrap" class="hidden">
-    <div class="section-title" id="rt-last-title">Итоги прошлого месяца</div>
-    <div class="card" style="padding:0" id="rt-last"></div>
+<!-- ================= ТИММЕЙТЫ ================= -->
+<div class="panel" id="panel-team">
+  <div class="bar"><button class="back" data-back><svg><use href="#i-back"/></svg></button><div class="pill"><i></i><span class="bal-val">0</span></div></div>
+  <div class="title">Тиммейты</div>
+  <div class="lead">Собери команду на вечер. Заявка появится здесь и в чате клуба.</div>
+  <button class="primary" id="tm-new">Найти тиммейтов</button>
+  <div id="tm-form" class="card hidden" style="margin-top:12px">
+    <div class="field-l">Игра</div>
+    <div class="chips2" id="tm-games" style="margin:0 -16px 14px;padding:0 16px"></div>
+    <div class="field-l">Когда</div>
+    <div class="days" id="tm-days"></div>
+    <div class="twheel" style="background:var(--surface-2)">
+      <div class="wcol" id="tm-hours"></div><div class="wsep">:</div><div class="wcol" id="tm-mins"></div>
+    </div>
+    <div class="stepper" style="background:var(--surface-2)"><span>Сколько нужно</span><div class="ctr"><button id="tm-minus">−</button><b id="tm-need">1</b><button id="tm-plus">+</button></div></div>
+    <input type="text" id="tm-comment" maxlength="140" placeholder="Комментарий: ранг, режим, микрофон" style="background:var(--surface-2)">
+    <button class="primary" id="tm-submit">Опубликовать</button>
   </div>
+  <div class="h2">Заявки</div>
+  <div id="tm-list"><div class="empty-state">Загружаем…</div></div>
+</div>
+
+<!-- ================= АФИША ================= -->
+<div class="panel" id="panel-events">
+  <div class="bar"><button class="back" data-back><svg><use href="#i-back"/></svg></button><div class="pill"><i></i><span class="bal-val">0</span></div></div>
+  <div class="title">Афиша</div>
+  <div class="lead">Турниры, ночные марафоны и большие матчи в клубе</div>
+  <div id="ev-list"><div class="empty-state">Загружаем…</div></div>
+</div>
+
+<!-- ================= ПРОФИЛЬ ДРУГОГО ИГРОКА ================= -->
+<div class="panel" id="panel-player">
+  <div class="bar"><button class="back" data-back><svg><use href="#i-back"/></svg></button><div></div></div>
+  <div id="pl-body"></div>
+</div>
+
+<!-- ================= МАГАЗИН ================= -->
+<div class="panel" id="panel-shop">
+  <div class="bar"><button class="back" data-back><svg><use href="#i-back"/></svg></button><div class="pill"><i></i><span class="bal-val" id="shop-balance">0</span></div></div>
+  <div class="title">Магазин</div>
+  <div class="shop-note" id="shop-note"><div id="shop-note-text"></div><div class="shop-limit" id="shop-limit"></div></div>
+  <div class="card hidden" id="shop-locked"><div class="empty-state">Покупки откроются после подтверждения номера телефона на главной.</div></div>
+  <div id="shop-orders"></div>
+  <div class="chips2" id="shop-nav"></div>
+  <div id="shop-list"><div class="empty-state">Загружаем товары…</div></div>
+  <div class="hint" style="margin:16px 4px 10px">Оплати колизами и покажи экран заказа администратору на стойке. Энергетики — только 18+.</div>
 </div>
 
 <!-- ================= БРОНЬ ================= -->
 <div class="panel" id="panel-booking">
-  <div class="header-row">
-    <img src="logo-icon.jpg" alt="COLIZEUM">
-    <div>
-      <div class="header-title display">COLIZEUM</div>
-      <div class="header-sub">Саввинская</div>
-    </div>
+  <div class="bar"><button class="back" data-back><svg><use href="#i-back"/></svg></button><div></div></div>
+  <div class="title">Бронь</div>
+  <div class="lead">Выбери время и места на схеме — администратор подтвердит в течение пары минут</div>
+  <div class="field-l">Когда</div>
+  <div class="days" id="bk-days"></div>
+  <div class="field-l">Во сколько</div>
+  <div class="twheel">
+    <div class="wcol" id="bk-hours"></div>
+    <div class="wsep">:</div>
+    <div class="wcol" id="bk-mins"></div>
   </div>
-  <h1 class="greeting display" style="font-size:22px">Быстрое бронирование</h1>
-  <div class="sub">Заполни — администратор подтвердит место</div>
-
-  <label class="field-label" for="b-name">Имя</label>
-  <input type="text" id="b-name" placeholder="Например, Игорь">
-
-  <label class="field-label" for="b-phone">Телефон</label>
-  <input type="tel" id="b-phone" placeholder="+7 999 123-45-67">
-
-  <label class="field-label" for="b-time">Время брони</label>
-  <input type="text" id="b-time" placeholder="Например, сегодня в 19:00">
-
-  <label class="field-label" for="b-seats">Места</label>
-  <input type="text" id="b-seats" placeholder="Например, два места рядом в стандарте">
-
-  <label class="field-label" for="b-notes">Пожелания</label>
-  <textarea id="b-notes" placeholder="Например: предварительно необходимо скачать игру Rust"></textarea>
-
-  <button class="primary" id="booking-submit">Отправить заявку</button>
+  <div class="field-l">Места — нажми на схеме</div>
+  <div class="zchips" id="hall-zones"></div>
+  <div class="hall" id="hall"><div class="hall-in" id="hall-in"></div></div>
+  <div class="zinfo" id="zinfo"></div>
+  <div class="bk-pick"><div class="bk-pick-t" id="bk-pick">Места не выбраны<small>Отметь одно или несколько — рядом для компании</small></div><button id="bk-clear" class="hidden">Сбросить</button></div>
+  <input type="text" id="b-name" placeholder="Имя">
+  <input type="tel" id="b-phone" placeholder="Телефон">
+  <textarea id="b-notes" placeholder="Пожелания — например, скачать игру заранее"></textarea>
+  <button class="primary" id="booking-submit">Забронировать</button>
+  <div class="bk-summary" id="bk-summary"></div>
 </div>
 
-<div class="bottom-nav">
-  <button class="nav-item active" data-panel="cabinet">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 16 0"/><path d="M12 12l4-4"/><circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none"/></svg>
-    Кабинет
+<div class="cart-bar hidden" id="cart-bar"><div style="display:flex;align-items:center;gap:10px"><span class="cart-n" id="cart-count"></span>Корзина</div><div id="cart-sum"></div></div>
+<div class="sheet-bg hidden" id="sheet-bg"><div class="sheet" id="sheet"></div></div>
+
+<div class="order-screen hidden" id="order-screen">
+  <button class="back-link" id="os-close">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
+    Закрыть
   </button>
-  <button class="nav-item" data-panel="promotions">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="1.5"/><path d="M4 10h16"/><path d="M12 10v10"/><path d="M12 10c-1.5-4-6-4-6-1.2C6 10 8 10 12 10Z"/><path d="M12 10c1.5-4 6-4 6-1.2C18 10 16 10 12 10Z"/></svg>
-    Акции
-  </button>
-  <button class="nav-item" data-panel="activities">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="3"/><circle cx="9" cy="9" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="15" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/></svg>
-    Активности
-  </button>
-  <button class="nav-item" data-panel="battle">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 17.5 3 6V3h3l11.5 11.5"/><path d="M13 19l6-6"/><path d="M16 16l4 4"/><path d="M19 21l2-2"/><path d="M9.5 6.5 21 18v3h-3L6.5 9.5" opacity=".55"/></svg>
-    Батл
-  </button>
-  <button class="nav-item" data-panel="rating">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8"/><path d="M12 17v4"/><path d="M7 4h10v5a5 5 0 0 1-10 0V4Z"/><path d="M17 5h3v2a3 3 0 0 1-3 3"/><path d="M7 5H4v2a3 3 0 0 0 3 3"/></svg>
-    Рейтинг
-  </button>
-  <button class="nav-item" data-panel="booking">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="16" rx="2.5"/><path d="M4 10h16"/><path d="M8 3v4"/><path d="M16 3v4"/></svg>
-    Бронь
-  </button>
+  <div class="os-live" id="os-live">
+    <div class="os-cap" id="os-cap">Заказ</div>
+    <div class="os-num" id="os-num">№—</div>
+    <div class="os-clock"><span class="os-pulse"></span><span id="os-clock">--:--:--</span></div>
+    <div style="font-size:12.5px;font-weight:600;margin-top:6px" id="os-who"></div>
+    <div class="os-timer" id="os-timer"></div>
+  </div>
+  <div class="os-status" id="os-status">Покажи этот экран администратору</div>
+  <div class="card" id="os-items" style="padding:6px 14px"></div>
+  <div class="ctotal"><span style="color:var(--muted)">Оплачено колизами</span><b id="os-total">0</b></div>
+  <div class="hint" id="os-hint">Экран «живой»: идут часы и бежит полоса — так администратор видит, что это настоящий заказ, а не скриншот. Забери заказ до конца отсчёта, после выдачи статус сменится сам.</div>
+  <button class="link-danger hidden" id="os-cancel" style="margin-top:18px;display:block">Отменить заказ и вернуть колизы</button>
 </div>
 
 <div id="toast" class="toast hidden"></div>
@@ -1063,7 +1654,16 @@ var _a, _b, _c;
 const tg = (_a = window.Telegram) == null ? void 0 : _a.WebApp;
 tg == null ? void 0 : tg.ready();
 tg == null ? void 0 : tg.expand();
-const initData = (tg == null ? void 0 : tg.initData) || "";
+const loginToken = (() => {
+  let t = new URLSearchParams(location.search).get("t");
+  try {
+    if (t) sessionStorage.setItem("__colz_t", t);
+    else t = sessionStorage.getItem("__colz_t");
+  } catch (e) {
+  }
+  return t || "";
+})();
+const initData = (tg == null ? void 0 : tg.initData) || (loginToken ? "tok:" + loginToken : "");
 const tgUser = ((_b = tg == null ? void 0 : tg.initDataUnsafe) == null ? void 0 : _b.user) || null;
 const $ = (id) => document.getElementById(id);
 let toastTimer = null;
@@ -1074,18 +1674,69 @@ function showToast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.add("hidden"), 3500);
 }
-function showPanel(name) {
+const navStack = [];
+let currentPanel = "cabinet";
+function showPanel(name, isBack) {
+  if (!$("panel-" + name)) name = "cabinet";
+  if (!isBack && name !== currentPanel) {
+    if (name === "cabinet") navStack.length = 0;
+    else navStack.push(currentPanel);
+  }
+  currentPanel = name;
   document.querySelectorAll(".panel").forEach((p) => p.classList.remove("active"));
   $("panel-" + name).classList.add("active");
-  const navName = name === "withdraw" || name === "policy" ? "cabinet" : name;
-  document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.panel === navName));
   window.scrollTo(0, 0);
+  try {
+    if (tg && tg.BackButton) {
+      if (name === "cabinet") tg.BackButton.hide();
+      else tg.BackButton.show();
+    }
+  } catch (e) {
+  }
   if (typeof battleOnPanel === "function") battleOnPanel(name === "battle");
   if (typeof ratingOnPanel === "function") ratingOnPanel(name === "rating");
+  if (typeof shopOnPanel === "function") shopOnPanel(name === "shop");
+  if (name === "booking" && typeof bookingOnPanel === "function") bookingOnPanel();
+  if (name === "team" && typeof loadTeam === "function") loadTeam();
+  if (name === "events" && typeof loadEvents === "function") loadEvents();
+  if (name === "profile" && typeof renderProfile === "function") renderProfile();
+  if (name === "visits" && typeof renderVisits === "function") renderVisits();
 }
-document.querySelectorAll(".nav-item").forEach((btn) => {
-  btn.addEventListener("click", () => showPanel(btn.dataset.panel));
+function goBack() {
+  if (typeof osOrder !== "undefined" && osOrder) {
+    closeOrderScreen();
+    return;
+  }
+  if (typeof sheetMode !== "undefined" && sheetMode) {
+    closeSheet();
+    return;
+  }
+  let prev = navStack.pop() || "cabinet";
+  if (prev === currentPanel) prev = "cabinet";
+  showPanel(prev, true);
+}
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-back]")) goBack();
 });
+try {
+  if (tg && tg.BackButton && tg.BackButton.onClick) tg.BackButton.onClick(goBack);
+} catch (e) {
+}
+function showGame(id) {
+  document.querySelectorAll("#panel-play .game-card").forEach((c) => c.classList.toggle("shown", c.id === id));
+  showPanel("play");
+  if (id === "g-crash" && typeof loadCrashHistory === "function") loadCrashHistory();
+}
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-play]");
+  if (t) showGame(t.dataset.play);
+});
+function koliz(n) {
+  const a = Math.abs(n) % 10, b = Math.abs(n) % 100;
+  if (a === 1 && b !== 11) return "колиз";
+  if (a >= 2 && a <= 4 && (b < 10 || b >= 20)) return "колиза";
+  return "колизов";
+}
 async function api(path, body) {
   const res = await fetch(path, {
     method: "POST",
@@ -1108,17 +1759,20 @@ function fmt(n) {
 function renderBalance() {
   const b = me ? me.balance : 0;
   $("balance-value").textContent = fmt(b);
-  $("games-balance").textContent = fmt(b);
+  $("balance-unit").textContent = koliz(b);
+  document.querySelectorAll(".bal-val").forEach((el) => el.textContent = fmt(b));
   $("bet-balance").textContent = fmt(b);
+  if (typeof renderShopLimit === "function") renderShopLimit();
   if (me) {
     const w = me.withdraw;
     $("withdraw-amount").textContent = fmt(w.amount);
-    $("withdraw-rules").textContent = "бонусов · от ".concat(fmt(w.min), " до ").concat(fmt(w.limit), " ").concat(w.window_label, " на один номер");
+    $("withdraw-rules").textContent = "колизов, от ".concat(fmt(w.min), " до ").concat(fmt(w.limit), " раз ").concat(w.window_label, ": либо списание, либо магазин");
     $("withdraw-open").disabled = !w.available;
     const hint = $("withdraw-hint");
     hint.textContent = w.reason || "";
     hint.classList.toggle("hidden", w.available || b <= 0);
   }
+  renderBurn();
   updatePayout();
   if (typeof refreshBetButtons === "function" && me) refreshBetButtons();
 }
@@ -1129,8 +1783,26 @@ function gameHint(g, word) {
 function renderGames() {
   if (!me || busy) return;
   const g = me.games;
+  const row = (id, g2, label) => {
+    const el = $(id);
+    if (!me.phone_verified) {
+      el.className = "wait";
+      el.textContent = "Нужен номер";
+      return;
+    }
+    if (g2.left > 0) {
+      el.className = "go";
+      el.textContent = label;
+    } else {
+      el.className = "wait";
+      el.innerHTML = g2.next_free_in ? "через<br>" + escapeHtml(g2.next_free_in) : "завтра";
+    }
+  };
+  row("row-spin", g.spin, "Крутить");
+  row("row-dice", g.dice, "Бросить");
+  row("row-prob", g.probability, "Играть");
   if (!me.phone_verified) {
-    const lock = "Подтверди номер в кабинете — и попытки откроются";
+    const lock = "Подтверди номер на главной — и попытки откроются";
     ["spin-button", "dice-button", "prob-button", "bet-toggle"].forEach((id) => $(id).disabled = true);
     ["spin-hint", "dice-hint", "prob-hint"].forEach((id) => $(id).textContent = lock);
     $("bet-box").classList.add("hidden");
@@ -1144,53 +1816,55 @@ function renderGames() {
   $("dice-hint").textContent = gameHint(g.dice, "бросков");
   $("prob-button").disabled = g.probability.left <= 0;
   $("prob-button").textContent = g.probability.left > 0 ? "Бесплатно · ".concat(g.probability.left, "/").concat(g.probability.total) : "Бесплатно";
-  $("prob-hint").textContent = g.probability.left > 0 ? "На бонусы можно играть без ограничений — пока хватает баланса" : gameHint(g.probability, "попыток") + ". На бонусы — без ограничений";
+  $("prob-hint").textContent = g.probability.left > 0 ? "На колизы можно играть без ограничений — пока хватает баланса" : gameHint(g.probability, "попыток") + ". На колизы — без ограничений";
   const totalLeft = g.spin.left + g.dice.left + g.probability.left;
-  $("quick-games-sub").textContent = totalLeft > 0 ? "Бесплатных попыток: ".concat(totalLeft) : "Рулетка, кости, дайс";
+  $("quick-games-sub").textContent = totalLeft > 0 ? "".concat(totalLeft, " ").concat(totalLeft === 1 ? "попытка" : "попытки", " бесплатно") : "Crash, слот, батлы";
 }
 function renderMe() {
-  $("greeting").textContent = "Привет, " + (me.nickname || (tgUser == null ? void 0 : tgUser.first_name) || "гость");
-  $("nick-line").classList.toggle("hidden", !me.nickname || nickEditing);
-  $("nick-value").textContent = me.nickname || "";
-  const gift = me.welcome_bonus > 0 ? "🎁 +".concat(me.welcome_bonus, " бонусов в подарок после регистрации") : "";
+  const name = me.nickname || (tgUser == null ? void 0 : tgUser.first_name) || me.name || "Гость";
+  $("greeting").textContent = name;
+  $("avatar").textContent = (name.trim()[0] || "C").toUpperCase();
+  const gift = me.welcome_bonus > 0 ? "После регистрации — ".concat(me.welcome_bonus, " ").concat(koliz(me.welcome_bonus), " в подарок.") : "";
   $("phone-gift").textContent = gift;
-  $("phone-gift").classList.toggle("hidden", !gift);
   $("nick-gift").textContent = gift;
-  $("nick-gift").classList.toggle("hidden", !gift);
-  const showNick = nickEditing || !me.nickname && me.phone_verified;
-  $("nick-card").classList.toggle("hidden", !showNick);
-  $("nick-step").classList.toggle("hidden", nickEditing || !!me.nickname);
-  $("nick-title").textContent = nickEditing ? "Новый никнейм" : "Придумай никнейм";
+  $("nick-card").classList.toggle("hidden", !(!me.nickname && me.phone_verified));
+  $("phone-card").classList.toggle("hidden", !!me.phone_verified);
   const noTier = me.tier === "none";
-  $("tier-name").textContent = me.tier_label.toUpperCase();
-  $("tier-name").style.color = noTier ? "var(--muted)" : "";
-  document.querySelector("#tier-card .tier-dot").style.background = noTier ? "var(--muted-2)" : "";
-  const parts = [];
-  if (me.phone && me.crm_found) parts.push("≈ " + fmt(me.monthly_topup) + " ₽ в месяц");
-  if (me.cashback_percent > 0) parts.push("кэшбэк " + me.cashback_percent + "%");
-  $("tier-topup").textContent = parts.join(" · ");
+  $("tier-name").textContent = noTier ? "Без статуса" : "".concat(me.tier_label, ", кэшбэк ").concat(me.cashback_percent, "%");
   const fill = $("progress-fill");
   const label = $("progress-label");
   const maxThreshold = tiers ? tiers[tiers.length - 1].threshold : me.monthly_topup + me.remaining_to_next_tier;
-  if (me.phone_verified && !me.crm_found) {
-    fill.style.width = "4%";
-    label.textContent = "Не нашли пополнений по номеру " + (me.phone || "") + ". Если в клубе ты записан на другой номер — скажи администратору, он свяжет номера.";
+  if (!me.phone_verified) {
+    fill.style.width = "0%";
+    label.textContent = "Подтверди номер — и увидишь свой уровень";
+  } else if (!me.crm_found) {
+    fill.style.width = "3%";
+    label.textContent = "Не нашли пополнений по номеру " + (me.phone || "") + ". Если в клубе ты на другом номере — скажи администратору.";
   } else if (me.next_tier) {
-    const pct = Math.max(4, Math.min(100, me.monthly_topup / maxThreshold * 100));
-    fill.style.width = pct + "%";
-    label.innerHTML = fmt(me.remaining_to_next_tier) + ' ₽ до уровня <b style="color:#fff">' + me.next_tier + "</b>";
+    fill.style.width = Math.max(3, Math.min(100, me.monthly_topup / maxThreshold * 100)) + "%";
+    label.textContent = "".concat(fmt(me.remaining_to_next_tier), " ₽ до ").concat(me.next_tier);
   } else {
     fill.style.width = "100%";
-    label.textContent = "Максимальный уровень — спасибо, что ты с нами!";
+    label.textContent = "Максимальный уровень";
   }
-  $("phone-card").classList.toggle("hidden", !!me.phone_verified);
   const ref = me.referral || {};
-  $("invite-card").classList.toggle("hidden", !ref.link || !ref.bonus);
-  if (ref.link) {
-    $("invite-sub").textContent = "+".concat(ref.bonus, " бонусов, когда друг подтвердит номер") + (ref.invited ? " · уже привёл: ".concat(ref.invited) : "");
+  $("invite-card").classList.toggle("hidden", !ref.link || !(ref.bonus || ref.activation_bonus));
+  if (ref.link) $("invite-sub").textContent = "+".concat(ref.bonus, " за друга") + (ref.invited ? ", позвал ".concat(ref.invited) : "");
+  document.querySelectorAll(".ref-b1").forEach((e) => e.textContent = ref.bonus || 0);
+  document.querySelectorAll(".ref-b2").forEach((e) => e.textContent = ref.activation_bonus || 0);
+  renderCheckin();
+  renderVisits();
+  $("cab-order").classList.toggle("hidden", !me.shop_active_orders);
+  $("prof-nick").textContent = me.nickname || "Профиль";
+  $("prof-phone").textContent = me.phone ? "".concat(me.phone, ", ").concat(noTier ? "без статуса" : me.tier_label) : "Номер не подтверждён";
+  if (document.activeElement !== $("prof-nick-input")) $("prof-nick-input").value = me.nickname || "";
+  if (!$("b-name").value) $("b-name").value = me.nickname ? (tgUser == null ? void 0 : tgUser.first_name) || me.name || "" : (tgUser == null ? void 0 : tgUser.first_name) || me.name || "";
+  if (!$("b-phone").value && me.phone) $("b-phone").value = me.phone;
+  if (me.dice_bonus_per_point) {
+    $("dice-tag").textContent = "×".concat(me.dice_bonus_per_point, " за очко");
+    $("row-dice-sub").textContent = "×".concat(me.dice_bonus_per_point, " за каждое очко");
   }
-  if (me.dice_bonus_per_point) $("dice-tag").textContent = "×".concat(me.dice_bonus_per_point, " бонусов");
-  if (!$("w-name").value) $("w-name").value = (tgUser == null ? void 0 : tgUser.first_name) || "";
+  if (!$("w-name").value) $("w-name").value = (tgUser == null ? void 0 : tgUser.first_name) || me.name || "";
   $("w-phone").value = me.phone || "";
   const bc = me.bet_config;
   $("prob-slider").min = bc.min_chance;
@@ -1200,7 +1874,7 @@ function renderMe() {
   renderBetGames();
 }
 function renderTiers() {
-  $("tier-list").innerHTML = tiers.map((t) => '\n    <div class="tier-list-row '.concat(me && me.tier === t.tier ? "current" : "", '">\n      <div class="tier-list-head">\n        <div><span class="tier-list-name" style="color:').concat(t.tier === "premium" ? "#fff" : me && me.tier === t.tier ? "var(--accent)" : "#B5B5B8", '">').concat(t.label.toUpperCase(), "</span>").concat(me && me.tier === t.tier ? '<span class="here-badge">ТЫ ЗДЕСЬ</span>' : "", '</div>\n        <div class="tier-list-threshold">от ').concat(fmt(t.threshold), ' ₽/мес</div>\n      </div>\n      <div class="tier-list-cashback">Кэшбэк ').concat(t.cashback_percent, "%</div>\n    </div>\n  ")).join("");
+  $("tier-list").innerHTML = tiers.map((t) => '\n    <div class="tier-list-row '.concat(me && me.tier === t.tier ? "current" : "", '">\n      <div class="tier-list-head">\n        <div><span class="tier-list-name" style="color:').concat(me && me.tier === t.tier ? "var(--accent)" : "var(--text)", '">').concat(t.label, "</span>").concat(me && me.tier === t.tier ? '<span class="here-badge">ты здесь</span>' : "", '</div>\n        <div class="tier-list-threshold">от ').concat(fmt(t.threshold), ' ₽/мес</div>\n      </div>\n      <div class="tier-list-cashback">Кэшбэк ').concat(t.cashback_percent, "%</div>\n    </div>\n  ")).join("");
 }
 async function loadTiers() {
   const res = await fetch("/api/tiers");
@@ -1277,6 +1951,11 @@ async function loadPromotions() {
   const res = await fetch("/api/promotions");
   const promos = await res.json();
   const wrap = $("promotions-list");
+  const big = (p) => {
+    const m = String(p.description).match(/[−-]\s?\d+\s?%|\d+\s?(колиз\S*|колиз\S*)/i);
+    return m ? m[0].replace("-", "−") : p.title;
+  };
+  setHTML($("promos-strip"), promos.slice(0, 8).map((p) => '<div class="promo" onclick="showPanel(\'promotions\')"><b>'.concat(escapeHtml(big(p)), "</b><span>").concat(escapeHtml(big(p) === p.title ? p.description : p.title), "</span></div>")).join(""));
   if (!promos.length) {
     wrap.innerHTML = '<div class="empty-state">Пока нет активных акций — загляни позже.</div>';
     return;
@@ -1289,12 +1968,24 @@ function applyBalance(newBalance) {
     renderBalance();
   }
 }
-let nickEditing = false;
-$("nick-edit").addEventListener("click", () => {
-  nickEditing = true;
-  $("nick-input").value = (me == null ? void 0 : me.nickname) || "";
-  renderMe();
-  $("nick-input").focus();
+$("prof-nick-save").addEventListener("click", async () => {
+  const nickname = $("prof-nick-input").value.trim();
+  if (!nickname) {
+    showToast("Введи никнейм");
+    return;
+  }
+  $("prof-nick-save").disabled = true;
+  try {
+    me = await api("/api/nickname", { initData, nickname });
+    renderMe();
+    showToast("Никнейм сохранён");
+    $("prof-nick-hint").textContent = "Менять можно раз в сутки";
+  } catch (e) {
+    $("prof-nick-hint").textContent = e.message;
+    showToast(e.message);
+  } finally {
+    $("prof-nick-save").disabled = false;
+  }
 });
 $("nick-save").addEventListener("click", async () => {
   const nickname = $("nick-input").value.trim();
@@ -1305,11 +1996,10 @@ $("nick-save").addEventListener("click", async () => {
   $("nick-save").disabled = true;
   try {
     const r = await api("/api/nickname", { initData, nickname });
-    nickEditing = false;
     me = r;
     renderMe();
     if (r.welcome_awarded) {
-      showToast("🎁 +".concat(r.welcome_awarded, " бонусов — добро пожаловать в COLIZEUM!"));
+      showToast("+".concat(r.welcome_awarded, " ").concat(koliz(r.welcome_awarded), " в подарок. Добро пожаловать в COLIZEUM!"));
       haptic("win");
     } else showToast("Никнейм сохранён");
   } catch (e) {
@@ -1321,6 +2011,16 @@ $("nick-save").addEventListener("click", async () => {
 });
 let ratingTimer = 0;
 const MEDAL = { 1: "🥇", 2: "🥈", 3: "🥉" };
+function podiumHtml(top, valueOf) {
+  const slot = (place) => {
+    const x = top.find((t) => t.place === place);
+    return '<div class="pod p'.concat(place).concat(x && x.me ? " me" : "").concat(x ? "" : " empty", '"><div class="nick"').concat(x ? ' data-nick="'.concat(escapeHtml(x.nickname), '"') : "", ">").concat(x ? escapeHtml(x.nickname) : "свободно", '</div>\n      <div class="vol">').concat(x ? valueOf(x) : "&nbsp;", '</div><div class="col">').concat(place, "</div></div>");
+  };
+  return slot(2) + slot(1) + slot(3);
+}
+function rowsHtml(list, valueOf) {
+  return list.map((x) => '<div class="rt-row'.concat(x.me ? " me" : "", '"><div class="n">').concat(x.place, '</div><div class="nick" data-nick="').concat(escapeHtml(x.nickname), '">').concat(escapeHtml(x.nickname), '</div><div class="vol">').concat(valueOf(x), "</div></div>")).join("");
+}
 async function loadRating() {
   let r;
   try {
@@ -1328,23 +2028,27 @@ async function loadRating() {
   } catch (e) {
     return;
   }
-  $("rt-sub").textContent = "".concat(r.month, " · итоги ").concat(r.ends);
-  $("rt-prize").textContent = r.prizes.length === 1 ? "1 место — ".concat(fmt(r.prizes[0]), " бонусов") : r.prizes.map((p, i) => "".concat(i + 1, " место — ").concat(fmt(p))).join(" · ");
-  $("rt-prize-sub").textContent = "Приз зачислится на баланс автоматически сразу после окончания месяца. Участников: ".concat(r.participants, ".");
-  $("rt-me").classList.toggle("hidden", !r.me.eligible);
+  if (rtTab === "volume") $("rt-sub").textContent = "".concat(r.month, ", итоги ").concat(r.ends);
+  setHTML($("rt-podium"), podiumHtml(r.top, (x) => fmt(x.volume)));
+  $("rt-prize").innerHTML = r.prizes.length ? fmt(r.prizes[0]) : "—";
+  $("rt-prize-sub").textContent = r.prizes.length > 1 ? "Призы: " + r.prizes.map((p, i) => "".concat(i + 1, " место ").concat(fmt(p))).join(", ") : "Приз за 1 место";
+  $("rt-me").classList.toggle("hidden", !r.me.eligible || !r.me.place || r.me.place <= 3);
   $("rt-need-nick").classList.toggle("hidden", r.me.eligible);
-  $("rt-my-place").textContent = r.me.place ? "#" + r.me.place : "—";
+  $("rt-my-place").textContent = r.me.place || "—";
   $("rt-my-vol").textContent = fmt(r.me.volume);
-  setHTML($("rt-list"), r.top.length ? r.top.map((x) => '\n    <div class="rt-row'.concat(x.me ? " me" : "").concat(x.place <= 3 ? " top" : "", '"><div class="n">').concat(MEDAL[x.place] || x.place, '</div>\n      <div class="nick">').concat(escapeHtml(x.nickname), '</div><div class="vol">').concat(fmt(x.volume), "</div></div>")).join("") : '<div class="empty-state" style="padding:16px">В этом месяце пока никто не играл — стань первым!</div>');
+  setHTML($("rt-list"), rowsHtml(r.top.filter((x) => x.place > 3).slice(0, 47), (x) => fmt(x.volume)));
+  $("rt-list").classList.toggle("hidden", r.top.length <= 3);
   $("rt-last-wrap").classList.toggle("hidden", !r.last_winners.some((w) => w.nickname));
   $("rt-last-title").textContent = "Итоги: ".concat(r.last_month.toLowerCase());
-  setHTML($("rt-last"), r.last_winners.filter((w) => w.nickname).map((w) => '\n    <div class="rt-row top"><div class="n">'.concat(MEDAL[w.place] || w.place, '</div><div class="nick">').concat(escapeHtml(w.nickname), '</div>\n      <div class="vol">+').concat(fmt(w.amount), "</div></div>")).join(""));
+  setHTML($("rt-last"), r.last_winners.filter((w) => w.nickname).map((w) => '<div class="rt-row"><div class="n">'.concat(w.place, '</div><div class="nick">').concat(escapeHtml(w.nickname), '</div><div class="vol">+').concat(fmt(w.amount), "</div></div>")).join(""));
+  if (r.me.place) $("tile-rating-sub").textContent = "ты ".concat(r.me.place, "-й");
 }
 function ratingOnPanel(active) {
   clearInterval(ratingTimer);
   if (active) {
-    loadRating();
-    ratingTimer = setInterval(loadRating, 15e3);
+    const load = () => rtTab === "friendly" ? loadFriendly() : loadRating();
+    load();
+    ratingTimer = setInterval(load, 15e3);
   }
 }
 async function waitForVerification() {
@@ -1357,7 +2061,7 @@ async function waitForVerification() {
     } catch (e) {
     }
     if (me && me.phone_verified) {
-      showToast(me.nickname && me.welcome_bonus === 0 && prevGift > 0 ? "🎁 Номер подтверждён — +".concat(prevGift, " бонусов в подарок!") : "Номер подтверждён — игры и списание открыты");
+      showToast(me.nickname && me.welcome_bonus === 0 && prevGift > 0 ? "Номер подтверждён — +".concat(prevGift, " колизов в подарок!") : "Номер подтверждён — игры и списание открыты");
       (_a2 = tg == null ? void 0 : tg.HapticFeedback) == null ? void 0 : _a2.notificationOccurred("success");
       return;
     }
@@ -1372,18 +2076,18 @@ $("share-phone").addEventListener("click", () => {
         hint.textContent = "Подтверждаем номер…";
         waitForVerification();
       } else {
-        hint.textContent = "Без номера игры и списание бонусов недоступны";
+        hint.textContent = "Без номера игры и списание колизов недоступны";
       }
     });
   } else {
     hint.textContent = "Обнови Telegram или открой чат с ботом и отправь /phone";
   }
 });
-$("invite-button").addEventListener("click", () => {
+$("invite-card").addEventListener("click", () => {
   var _a2;
   const link = (_a2 = me == null ? void 0 : me.referral) == null ? void 0 : _a2.link;
   if (!link) return;
-  const text = "Залетай в COLIZEUM на Саввинской: личный кабинет клуба в Telegram — бесплатные игры на бонусы каждый день и кэшбэк до 20% 🎮";
+  const text = "Залетай в COLIZEUM на Саввинской: личный кабинет клуба в Telegram — бесплатные игры на колизы каждый день и кэшбэк до 20% 🎮";
   const url = "https://t.me/share/url?url=" + encodeURIComponent(link) + "&text=" + encodeURIComponent(text);
   if (tg == null ? void 0 : tg.openTelegramLink) tg.openTelegramLink(url);
   else window.open(url, "_blank");
@@ -1404,7 +2108,7 @@ $("withdraw-submit").addEventListener("click", async () => {
   btn.disabled = true;
   try {
     const r = await api("/api/withdraw", { initData, name });
-    showToast("Заявка на ".concat(fmt(r.amount), " бонусов отправлена администратору"));
+    showToast("Заявка на ".concat(fmt(r.amount), " колизов отправлена администратору"));
     await loadMe();
     showPanel("cabinet");
   } catch (e) {
@@ -1424,7 +2128,7 @@ $("spin-button").addEventListener("click", async () => {
     const r = await api("/api/spin", { initData });
     setTimeout(async () => {
       var _a2;
-      $("spin-result-value").textContent = "+" + r.value + " бонусов";
+      $("spin-result-value").textContent = "+" + r.value + " колизов";
       $("spin-result").classList.remove("hidden");
       (_a2 = tg == null ? void 0 : tg.HapticFeedback) == null ? void 0 : _a2.notificationOccurred("success");
       applyBalance(r.balance);
@@ -1452,7 +2156,7 @@ $("dice-button").addEventListener("click", async () => {
     setTimeout(async () => {
       face.classList.remove("rolling");
       $("dice-label").textContent = r.value;
-      $("dice-bonus").textContent = "+" + r.bonus + " бонусов на баланс";
+      $("dice-bonus").textContent = "+" + r.bonus + " " + koliz(r.bonus) + " на баланс";
       $("dice-bonus").classList.remove("hidden");
       applyBalance(r.balance);
       busy = false;
@@ -1489,17 +2193,17 @@ function updatePayout() {
   const payout = Math.floor(stake * (100 - bc.house_edge_percent) / chance);
   if (stake > me.balance) {
     line.classList.add("warn");
-    line.innerHTML = "<b>Недостаточно бонусов</b> — на балансе ".concat(fmt(me.balance));
+    line.innerHTML = "<b>Недостаточно колизов</b> — на балансе ".concat(fmt(me.balance));
     submit.disabled = true;
     return;
   }
   if (payout > bc.max_payout) {
     line.classList.add("warn");
-    line.innerHTML = "<b>Максимальный выигрыш — ".concat(fmt(bc.max_payout), " бонусов.</b> Уменьши ставку или повысь шанс");
+    line.innerHTML = "<b>Максимальный выигрыш — ".concat(fmt(bc.max_payout), " колизов.</b> Уменьши ставку или повысь шанс");
     submit.disabled = true;
     return;
   }
-  line.innerHTML = "При выигрыше: <b>".concat(fmt(payout), " бонусов</b> (").concat(multText2, ", чистыми +").concat(fmt(payout - stake), ")");
+  line.innerHTML = "При выигрыше: <b>".concat(fmt(payout), " колизов</b> (").concat(multText2, ", чистыми +").concat(fmt(payout - stake), ")");
   submit.disabled = busy;
 }
 probSlider.addEventListener("input", () => {
@@ -1510,7 +2214,7 @@ $("bet-stake").addEventListener("input", updatePayout);
 $("bet-toggle").addEventListener("click", () => {
   const box = $("bet-box");
   box.classList.toggle("hidden");
-  $("bet-toggle").textContent = box.classList.contains("hidden") ? "На бонусы" : "Скрыть ставку";
+  $("bet-toggle").textContent = box.classList.contains("hidden") ? "На колизы" : "Скрыть ставку";
   if (!box.classList.contains("hidden")) updatePayout();
 });
 $("bet-all").addEventListener("click", () => {
@@ -1536,7 +2240,7 @@ $("prob-button").addEventListener("click", async () => {
   try {
     const r = await api("/api/probability", { initData, threshold: currentChance() });
     if (r.win) {
-      showProbResult(r.rolled_number, "Повезло! +".concat(r.reward, " бонусов на баланс"), true);
+      showProbResult(r.rolled_number, "Повезло! +".concat(r.reward, " колизов на баланс"), true);
       (_a2 = tg == null ? void 0 : tg.HapticFeedback) == null ? void 0 : _a2.notificationOccurred("success");
     } else {
       showProbResult(r.rolled_number, "Не повезло — попробуй ещё раз", false);
@@ -1560,10 +2264,10 @@ $("bet-submit").addEventListener("click", async () => {
   try {
     const r = await api("/api/probability/bet", { initData, threshold: currentChance(), stake });
     if (r.win) {
-      showProbResult(r.rolled_number, "Выигрыш! +".concat(fmt(r.net), " бонусов"), true);
+      showProbResult(r.rolled_number, "Выигрыш! +".concat(fmt(r.net), " колизов"), true);
       (_a2 = tg == null ? void 0 : tg.HapticFeedback) == null ? void 0 : _a2.notificationOccurred("success");
     } else {
-      showProbResult(r.rolled_number, "Ставка ".concat(fmt(r.stake), " бонусов проиграна"), false);
+      showProbResult(r.rolled_number, "Ставка ".concat(fmt(r.stake), " колизов проиграна"), false);
       (_b2 = tg == null ? void 0 : tg.HapticFeedback) == null ? void 0 : _b2.notificationOccurred("error");
     }
     applyBalance(r.balance);
@@ -1616,10 +2320,10 @@ function stakeProblem(game) {
   const st = stakeOf(game);
   if (!me || !c) return "Загружаем…";
   if (!me.phone_verified) return "Подтверди номер в кабинете — и игры откроются";
-  if (!st) return "Ставка от ".concat(fmt(c.min), " до ").concat(fmt(c.max), " бонусов");
-  if (st < c.min) return "Минимальная ставка — ".concat(fmt(c.min), " бонусов");
-  if (st > c.max) return "Максимальная ставка — ".concat(fmt(c.max), " бонусов");
-  if (st > me.balance) return "Недостаточно бонусов — на балансе ".concat(fmt(me.balance));
+  if (!st) return "Ставка от ".concat(fmt(c.min), " до ").concat(fmt(c.max), " колизов");
+  if (st < c.min) return "Минимальная ставка — ".concat(fmt(c.min), " колизов");
+  if (st > c.max) return "Максимальная ставка — ".concat(fmt(c.max), " колизов");
+  if (st > me.balance) return "Недостаточно колизов — на балансе ".concat(fmt(me.balance));
   return null;
 }
 function refreshBetButtons() {
@@ -1635,7 +2339,7 @@ function refreshBetButtons() {
     $("slots-button").disabled = !!p;
     $("slot-lever").classList.toggle("disabled", !!p);
     $("slots-button").textContent = p ? "Потянуть рычаг" : "Потянуть рычаг · ".concat(fmt(stakeOf("slots")));
-    $("slots-hint").textContent = p || "Ставка ".concat(fmt(cfg("slots").min), "–").concat(fmt(cfg("slots").max), " бонусов");
+    $("slots-hint").textContent = p || "Ставка ".concat(fmt(cfg("slots").min), "–").concat(fmt(cfg("slots").max), " колизов");
   }
   if (!hilo.round && !hilo.busy) {
     const p = stakeProblem("hilo");
@@ -1804,7 +2508,7 @@ function crashHandleFinished(d) {
     $("crash-button").disabled = true;
     $("crash-button").textContent = "Забрано ".concat(multText(d.cashout_mult));
     $("crash-sub").className = "crash-sub win";
-    $("crash-sub").textContent = "+".concat(fmt(d.payout), " бонусов (чистыми +").concat(fmt(d.payout - d.stake), ")");
+    $("crash-sub").textContent = "+".concat(fmt(d.payout), " колизов (чистыми +").concat(fmt(d.payout - d.stake), ")");
     haptic("win");
   } else {
     $("crash-button").disabled = true;
@@ -1986,7 +2690,7 @@ async function slotsSpin() {
       });
       if (r.net > 0) {
         res.className = "game-result good";
-        res.textContent = "".concat(r.label, " — +").concat(fmt(r.payout), " бонусов (").concat(multText(r.mult), ")");
+        res.textContent = "".concat(r.label, " — +").concat(fmt(r.payout), " колизов (").concat(multText(r.mult), ")");
         $("slot-body").classList.add("flash");
         setTimeout(() => $("slot-body").classList.remove("flash"), 1400);
         haptic("win");
@@ -2097,7 +2801,7 @@ document.querySelectorAll("#hilo-choices button").forEach((btn) => btn.addEventL
       if (d.status === "won") {
         el.classList.add("win");
         res.className = "game-result good";
-        res.textContent = "".concat(d.player.label, " ").concat(word, " ").concat(d.dealer.label, " — +").concat(fmt(d.payout), " бонусов (").concat(multText(d.coef), ")");
+        res.textContent = "".concat(d.player.label, " ").concat(word, " ").concat(d.dealer.label, " — +").concat(fmt(d.payout), " колизов (").concat(multText(d.coef), ")");
         haptic("win");
       } else {
         el.classList.add("lose");
@@ -2173,7 +2877,7 @@ async function loadBattleList() {
     return;
   }
   $("bt-incoming-wrap").classList.toggle("hidden", !d.incoming.length);
-  setHTML($("bt-incoming"), d.incoming.map((x) => '\n    <div class="bt-row"><div><div class="bt-name">⚔️ '.concat(escapeHtml(x.name), '</div><div class="bt-sub">вызывает тебя на батл</div></div>\n      <div class="bt-actions"><button class="primary" data-acc="').concat(x.id, '">Принять</button><button class="secondary" data-dec="').concat(x.id, '">Нет</button></div></div>')).join(""));
+  setHTML($("bt-incoming"), d.incoming.map((x) => '\n    <div class="bt-row"><div><div class="bt-name">'.concat(escapeHtml(x.name), '</div><div class="bt-sub">вызывает тебя на батл</div></div>\n      <div class="bt-actions"><button class="primary" data-acc="').concat(x.id, '">Принять</button><button class="secondary" data-dec="').concat(x.id, '">Нет</button></div></div>')).join(""));
   setHTML($("bt-active"), d.active.length ? d.active.map((x) => '\n    <div class="bt-row" data-open="'.concat(x.id, '"><div><div class="bt-name">').concat(escapeHtml(x.name), '</div>\n      <div class="bt-sub">').concat(x.playing ? "Идёт: " + x.playing : "Выберите игру", "</div></div>\n      ").concat(x.your_move ? '<span class="badge">твой ход</span>' : '<span style="color:var(--muted)">›</span>', "</div>")).join("") : '<div class="bt-empty">Пока пусто — вызови кого-нибудь.</div>');
   $("bt-outgoing-wrap").classList.toggle("hidden", !d.outgoing.length);
   setHTML($("bt-outgoing"), d.outgoing.map((x) => '\n    <div class="bt-row"><div><div class="bt-name">'.concat(escapeHtml(x.name), '</div><div class="bt-sub">ждём, когда примет</div></div>\n      <div class="bt-actions"><button class="secondary" data-cancel="').concat(x.id, '">Отменить</button></div></div>')).join(""));
@@ -2231,7 +2935,7 @@ $("bt-invite-ref").addEventListener("click", (e) => {
     showToast("Ссылка появится после подтверждения номера");
     return;
   }
-  const text = "Го батл в COLIZEUM! Заходи в бота клуба — сыграем на бонусы ⚔️";
+  const text = "Го батл в COLIZEUM! Заходи в бота клуба — сыграем на колизы ";
   const url = "https://t.me/share/url?url=" + encodeURIComponent(link) + "&text=" + encodeURIComponent(text);
   if (tg == null ? void 0 : tg.openTelegramLink) tg.openTelegramLink(url);
   else window.open(url, "_blank");
@@ -2359,7 +3063,7 @@ function updateSelectHint() {
   let hint, ok = true;
   const max = poker ? s.my_balance : s.max_stake;
   if (max < s.min_stake) {
-    hint = poker ? "Нужно минимум ".concat(s.min_stake, " бонусов на балансе") : "У кого-то из вас меньше ".concat(s.min_stake, " бонусов — поиграйте в бесплатные игры");
+    hint = poker ? "Нужно минимум ".concat(s.min_stake, " колизов на балансе") : "У кого-то из вас меньше ".concat(s.min_stake, " колизов — поиграйте в бесплатные игры");
     ok = false;
   } else if (st < s.min_stake) {
     hint = "Минимум ".concat(s.min_stake);
@@ -2579,6 +3283,729 @@ document.querySelectorAll("[data-pk]").forEach((b) => b.addEventListener("click"
   else if (a === "raise") roomCall("/api/battle/action", { action: "raise", amount: parseInt($("pk-raise-num").value, 10) || 0 });
   else roomCall("/api/battle/action", { action: a });
 }));
+function renderCheckin() {
+  const c = me && me.checkin;
+  $("ci-card").classList.toggle("hidden", !me || !me.phone_verified || !c);
+  if (!c) return;
+  const visits = c.visits_month ? ", визитов в месяце: ".concat(c.visits_month) : "";
+  if (c.today === "pending") {
+    $("ci-title").textContent = "Чек на проверке";
+    $("ci-sub").textContent = "скоро подтвердим";
+  } else if (c.today === "approved") {
+    $("ci-title").textContent = "Ты в клубе";
+    $("ci-sub").textContent = (c.today_bonus ? "+".concat(c.today_bonus, " начислено") : "визит засчитан") + visits;
+  } else {
+    $("ci-title").textContent = "Я в клубе";
+    $("ci-sub").textContent = c.today === "rejected" ? "пришли чек ещё раз" : "+".concat(c.bonus, " за фото чека");
+  }
+}
+function compressImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("read"));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => {
+        if (String(reader.result).length < 55e5) resolve(reader.result);
+        else reject(new Error("decode"));
+      };
+      img.onload = () => {
+        const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+        const cv = document.createElement("canvas");
+        cv.width = Math.round(img.width * k);
+        cv.height = Math.round(img.height * k);
+        cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+        resolve(cv.toDataURL("image/jpeg", 0.82));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+$("ci-card").addEventListener("click", () => showPanel("visits"));
+$("vs-upload").addEventListener("click", () => {
+  const c = me && me.checkin;
+  if (c && (c.today === "pending" || c.today === "approved")) {
+    showToast(c.today === "pending" ? "Чек уже у администратора" : "Сегодня ты уже отметился");
+    return;
+  }
+  $("ci-file").value = "";
+  $("ci-file").click();
+});
+$("ci-file").addEventListener("change", async () => {
+  const f = $("ci-file").files && $("ci-file").files[0];
+  if (!f) return;
+  $("ci-sub").textContent = "отправляем…";
+  try {
+    const photo = await compressImage(f);
+    me.checkin = await api("/api/checkin", { initData, photo });
+    showToast("Чек отправлен администратору — колизы придут после проверки");
+    haptic("win");
+  } catch (e) {
+    showToast(e.message && e.message.length > 12 ? e.message : "Не получилось отправить фото — пришли фото чека боту в чат");
+  } finally {
+    renderCheckin();
+    if (typeof renderVisits === "function") renderVisits();
+  }
+});
+function burnLeft() {
+  if (!me || !me.bonus_expires_at) return "";
+  const ms = new Date(me.bonus_expires_at).getTime() - Date.now();
+  if (ms <= 0) return "меньше минуты";
+  const m = Math.floor(ms / 6e4), h = Math.floor(m / 60);
+  return h > 0 ? "".concat(h, " ч ").concat(pad2(m % 60), " мин") : "".concat(m, " мин");
+}
+function renderBurn() {
+  const el = $("burn-line");
+  const show = !!(me && me.balance > 0 && me.bonus_expires_at);
+  el.style.visibility = show ? "visible" : "hidden";
+  if (show) el.innerHTML = '<svg><use href="#i-flame"/></svg>Сгорят через '.concat(escapeHtml(burnLeft()));
+}
+setInterval(() => {
+  if (me) {
+    renderBurn();
+    if (typeof renderShopLimit === "function") renderShopLimit();
+  }
+}, 3e4);
+let shopCat = null;
+const cart = {};
+let shopOrders = [];
+let sheetMode = null;
+let sel = null;
+function prod(id) {
+  return shopCat ? shopCat.products.find((p) => p.id === id) : null;
+}
+function variant(p, vid) {
+  return p.variants.find((v) => v.id === vid) || p.variants[0];
+}
+function cartLines() {
+  return Object.keys(cart).filter((k) => cart[k] > 0).map((k) => {
+    const [pid, vid] = k.split("|");
+    const p = prod(pid);
+    return p ? { key: k, p, v: variant(p, vid), qty: cart[k] } : null;
+  }).filter(Boolean);
+}
+function cartTotal() {
+  return cartLines().reduce((s, l) => s + l.p.price * l.qty, 0);
+}
+function cartCount() {
+  return cartLines().reduce((s, l) => s + l.qty, 0);
+}
+function inCart(pid) {
+  return cartLines().filter((l) => l.p.id === pid).reduce((s, l) => s + l.qty, 0);
+}
+function addToCart(pid, vid, qty) {
+  const k = pid + "|" + vid;
+  const max = shopCat && shopCat.max_qty || 5;
+  cart[k] = Math.max(0, Math.min(max, (cart[k] || 0) + qty));
+  if (!cart[k]) delete cart[k];
+  haptic("light");
+  renderShop();
+}
+function renderShopLimit() {
+  if (!me || !me.withdraw) return;
+  const w = me.withdraw;
+  $("shop-limit").innerHTML = w.spent_kind ? escapeHtml(w.reason || "Сегодня колизы уже потрачены") : "Тратить колизы можно <b>раз ".concat(escapeHtml(w.window_label), "</b>: либо заказ в магазине (до <b>").concat(fmt(w.limit), "</b>), либо списание на карту.") + (me.bonus_expires_at && me.balance > 0 ? " Колизы сгорят через <b>".concat(escapeHtml(burnLeft()), "</b>.") : "");
+  $("shop-locked").classList.toggle("hidden", !!me.phone_verified);
+}
+let shopTab = null;
+function renderShop() {
+  renderShopLimit();
+  if (!shopCat) return;
+  $("shop-note-text").textContent = shopCat.note;
+  if (!shopTab || !shopCat.categories.some((c) => c.id === shopTab)) shopTab = shopCat.categories.length ? shopCat.categories[0].id : null;
+  setHTML($("shop-nav"), shopCat.categories.map((c) => '<button class="chip2'.concat(c.id === shopTab ? " on" : "", '" data-sgo="').concat(c.id, '">').concat(escapeHtml(c.title), "</button>")).join(""));
+  setHTML($("shop-list"), '<div class="pgrid">'.concat(shopCat.products.filter((p) => p.category === shopTab).map((p) => {
+    const n2 = inCart(p.id);
+    return '<div class="pcard2" data-prod="'.concat(p.id, '">\n        <div class="pimg"><img src="').concat(p.variants[0].img, '" alt="" loading="lazy"></div>\n        ').concat(p.adult ? '<div class="p18">18+</div>' : "").concat(n2 ? '<div class="pincart">'.concat(n2, "</div>") : "", '\n        <div class="pinfo"><div class="pname">').concat(escapeHtml(p.name), '</div>\n          <div class="pvars">').concat(p.variants.length > 1 ? p.variants.length + " " + plural(p.variants.length, "вкус", "вкуса", "вкусов") : "&nbsp;", '</div>\n          <div class="pbottom"><div class="pprice">').concat(fmt(p.price), '<i class="coin"></i></div><button class="padd" data-add="').concat(p.id, '">+</button></div>\n        </div></div>');
+  }).join(""), "</div>"));
+  const n = cartCount();
+  $("cart-bar").classList.toggle("hidden", !n || !$("panel-shop").classList.contains("active"));
+  document.body.classList.toggle("has-cart", !!n);
+  $("cart-count").textContent = n;
+  $("cart-sum").textContent = n ? "".concat(fmt(cartTotal()), " ").concat(koliz(cartTotal())) : "";
+  if (sheetMode === "cart") renderCartSheet();
+}
+function plural(n, one, few, many) {
+  const a = n % 10, b = n % 100;
+  if (a === 1 && b !== 11) return one;
+  if (a >= 2 && a <= 4 && (b < 10 || b >= 20)) return few;
+  return many;
+}
+$("shop-nav").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-sgo]");
+  if (!b) return;
+  shopTab = b.dataset.sgo;
+  renderShop();
+  haptic("light");
+});
+$("shop-list").addEventListener("click", (e) => {
+  const add = e.target.closest("[data-add]");
+  if (add) {
+    e.stopPropagation();
+    const p = prod(add.dataset.add);
+    if (p && p.variants.length === 1) {
+      addToCart(p.id, p.variants[0].id, 1);
+      showToast("«".concat(p.name, "» в корзине"));
+    } else if (p) openProduct(p.id);
+    return;
+  }
+  const card = e.target.closest("[data-prod]");
+  if (card) openProduct(card.dataset.prod);
+});
+function openSheet(mode) {
+  sheetMode = mode;
+  $("sheet-bg").classList.remove("hidden");
+  document.body.style.overflow = "hidden";
+}
+function closeSheet() {
+  sheetMode = null;
+  $("sheet-bg").classList.add("hidden");
+  document.body.style.overflow = "";
+}
+$("sheet-bg").addEventListener("click", (e) => {
+  if (e.target === $("sheet-bg")) closeSheet();
+});
+function openProduct(pid) {
+  const p = prod(pid);
+  if (!p) return;
+  sel = { pid, vid: p.variants[0].id, qty: 1 };
+  renderProductSheet();
+  openSheet("product");
+}
+function renderProductSheet() {
+  const p = prod(sel.pid);
+  if (!p) return;
+  const v = variant(p, sel.vid);
+  $("sheet").innerHTML = '<div class="sheet-grip"></div><button class="sheet-x" data-close>×</button>\n    <div class="sheet-img"><img src="'.concat(v.img, '" alt=""></div>\n    <div class="sheet-title">').concat(escapeHtml(p.name), '</div>\n    <div class="row-between"><div class="pprice" style="font-size:18px">').concat(fmt(p.price), '<i class="coin"></i></div>\n      ').concat(p.bar_price ? '<div class="hint" style="margin:0">в баре '.concat(fmt(p.bar_price), " ₽</div>") : "", "</div>\n    ").concat(p.adult ? '<div class="hint">Энергетики выдаём только с 18 лет</div>' : "", "\n    ").concat(p.variants.length > 1 ? '<div class="vchips">'.concat(p.variants.map((x) => '<button class="vchip'.concat(x.id === v.id ? " on" : "", '" data-var="').concat(x.id, '">').concat(escapeHtml(x.label), "</button>")).join(""), "</div>") : '<div style="height:14px"></div>', '\n    <div class="row-between" style="margin-bottom:14px"><div class="qty"><button data-q="-1">−</button><b>').concat(sel.qty, '</b><button data-q="1">+</button></div>\n      <div class="hint" style="margin:0">').concat(inCart(p.id) ? "в корзине: " + inCart(p.id) : "", '</div></div>\n    <button class="primary" data-tocart>В корзину · ').concat(fmt(p.price * sel.qty), " колизов</button>");
+}
+function renderCartSheet() {
+  const lines = cartLines();
+  if (!lines.length) {
+    closeSheet();
+    return;
+  }
+  const total = cartTotal();
+  const w = me ? me.withdraw : null;
+  let warn = "";
+  if (!me || !me.phone_verified) warn = "Покупки доступны после подтверждения номера в кабинете";
+  else if (total > me.balance) warn = "Не хватает колизов: на балансе ".concat(fmt(me.balance));
+  else if (w && w.spent_kind) warn = w.reason || "Сегодня колизы уже потрачены";
+  else if (w && total > w.limit) warn = "За один раз — не больше ".concat(fmt(w.limit), " колизов. Убери что-нибудь из корзины");
+  $("sheet").innerHTML = '<div class="sheet-grip"></div><button class="sheet-x" data-close>×</button>\n    <div class="sheet-title">Корзина</div>\n    '.concat(lines.map((l) => '<div class="cline"><img src="'.concat(l.v.img, '" alt="">\n      <div><div class="cn">').concat(escapeHtml(l.p.name), "</div>").concat(l.p.variants.length > 1 ? '<div class="cv">'.concat(escapeHtml(l.v.label), "</div>") : "", '<div class="cp">').concat(fmt(l.p.price * l.qty), '<i class="coin"></i></div></div>\n      <div class="qty sm"><button data-cq="').concat(l.key, '" data-d="-1">−</button><b>').concat(l.qty, '</b><button data-cq="').concat(l.key, '" data-d="1">+</button></div></div>')).join(""), '\n    <div class="ctotal"><span style="color:var(--muted)">Итого</span><b>').concat(fmt(total), '<i class="coin"></i></b></div>\n    <div class="hint" style="margin:0 0 10px">Баланс: ').concat(fmt(me ? me.balance : 0), " · ").concat(escapeHtml(shopCat ? shopCat.note : ""), "</div>\n    ").concat(warn ? '<div class="cwarn">'.concat(escapeHtml(warn), "</div>") : "", '\n    <button class="primary" data-pay ').concat(warn ? "disabled" : "", ">Оплатить колизами · ").concat(fmt(total), '</button>\n    <div class="hint" style="text-align:center">После оплаты покажи экран заказа администратору на стойке</div>');
+}
+$("cart-bar").addEventListener("click", () => {
+  renderCartSheet();
+  openSheet("cart");
+});
+$("sheet").addEventListener("click", async (e) => {
+  const t = e.target;
+  if (t.closest("[data-close]")) {
+    closeSheet();
+    return;
+  }
+  if (sheetMode === "product") {
+    const vb = t.closest("[data-var]");
+    if (vb) {
+      sel.vid = vb.dataset.var;
+      renderProductSheet();
+      return;
+    }
+    const qb = t.closest("[data-q]");
+    if (qb) {
+      sel.qty = Math.max(1, Math.min(shopCat && shopCat.max_qty || 5, sel.qty + parseInt(qb.dataset.q, 10)));
+      renderProductSheet();
+      return;
+    }
+    if (t.closest("[data-tocart]")) {
+      const p = prod(sel.pid);
+      addToCart(sel.pid, sel.vid, sel.qty);
+      closeSheet();
+      showToast("«".concat(p.name, "» в корзине"));
+    }
+    return;
+  }
+  if (sheetMode === "cart") {
+    const cq = t.closest("[data-cq]");
+    if (cq) {
+      const [pid, vid] = cq.dataset.cq.split("|");
+      addToCart(pid, vid, parseInt(cq.dataset.d, 10));
+      return;
+    }
+    const pay = t.closest("[data-pay]");
+    if (pay && !pay.disabled) payCart(pay);
+  }
+});
+function confirmTg(text) {
+  return new Promise((res) => {
+    try {
+      if (tg && tg.showConfirm && tg.isVersionAtLeast && tg.isVersionAtLeast("6.2")) {
+        tg.showConfirm(text, (ok) => res(!!ok));
+        return;
+      }
+    } catch (e) {
+    }
+    res(window.confirm(text));
+  });
+}
+async function payCart(btn) {
+  const total = cartTotal();
+  if (!await confirmTg("Списать ".concat(fmt(total), " колизов и оформить заказ?"))) return;
+  btn.disabled = true;
+  try {
+    const items = cartLines().map((l) => ({ product: l.p.id, variant: l.v.id, qty: l.qty }));
+    const r = await api("/api/shop/order", { initData, items });
+    Object.keys(cart).forEach((k) => delete cart[k]);
+    me.balance = r.balance;
+    me.withdraw = r.withdraw;
+    me.shop_active_orders = (me.shop_active_orders || 0) + 1;
+    closeSheet();
+    renderBalance();
+    renderShop();
+    renderMe();
+    haptic("win");
+    openOrderScreen(r.order);
+    loadOrders();
+  } catch (e) {
+    showToast(e.message);
+    btn.disabled = false;
+  }
+}
+async function loadShop() {
+  try {
+    shopCat = await (await fetch("/api/shop/catalog")).json();
+  } catch (e) {
+    $("shop-list").innerHTML = '<div class="empty-state">Не удалось загрузить магазин — попробуй позже</div>';
+    return;
+  }
+  renderShop();
+}
+async function loadOrders() {
+  try {
+    shopOrders = (await api("/api/shop/orders", { initData })).orders;
+  } catch (e) {
+    return;
+  }
+  const active = shopOrders.filter((o) => o.status === "new");
+  setHTML($("shop-orders"), active.map((o) => '<div class="order-chip" data-order="'.concat(o.id, '"><div>Заказ <b>№').concat(o.id, "</b> · ").concat(fmt(o.total), " Б — ждёт выдачи</div><b>Показать ›</b></div>")).join(""));
+  if (me) {
+    me.shop_active_orders = active.length;
+    $("cab-order").classList.toggle("hidden", !active.length);
+  }
+}
+$("shop-orders").addEventListener("click", (e) => {
+  const c = e.target.closest("[data-order]");
+  if (!c) return;
+  const o = shopOrders.find((x) => x.id === parseInt(c.dataset.order, 10));
+  if (o) openOrderScreen(o);
+});
+$("cab-order").addEventListener("click", async () => {
+  await loadOrders();
+  const o = shopOrders.find((x) => x.status === "new");
+  if (o) openOrderScreen(o);
+  else showPanel("shop");
+});
+function shopOnPanel(active) {
+  $("cart-bar").classList.toggle("hidden", !active || !cartCount());
+  if (active) {
+    if (!shopCat) loadShop();
+    else renderShop();
+    loadOrders();
+  }
+}
+let osOrder = null, osClock = 0, osPoll = 0;
+function pad2(n) {
+  return (n < 10 ? "0" : "") + n;
+}
+function hms(ms) {
+  const s = Math.max(0, Math.floor(ms / 1e3));
+  return Math.floor(s / 3600) + ":" + pad2(Math.floor(s % 3600 / 60)) + ":" + pad2(s % 60);
+}
+function mskNow() {
+  const d = new Date(Date.now() + 3 * 3600 * 1e3);
+  return pad2(d.getUTCHours()) + ":" + pad2(d.getUTCMinutes()) + ":" + pad2(d.getUTCSeconds());
+}
+function mskTime(iso) {
+  const d = new Date(new Date(iso).getTime() + 3 * 3600 * 1e3);
+  return pad2(d.getUTCHours()) + ":" + pad2(d.getUTCMinutes());
+}
+function renderOrderScreen() {
+  const o = osOrder;
+  if (!o) return;
+  $("os-num").textContent = "№" + o.id;
+  $("os-who").textContent = (o.nickname ? o.nickname + " · " : "") + new Date(Date.now() + 3 * 3600 * 1e3).toISOString().slice(0, 10).split("-").reverse().join(".");
+  $("os-live").classList.toggle("done", o.status !== "new");
+  $("os-cap").textContent = o.status === "new" ? "Заказ · покажи администратору" : { issued: "Заказ выдан", expired: "Заказ просрочен" }[o.status] || "Заказ отменён";
+  const st = $("os-status");
+  st.className = "os-status " + o.status;
+  st.textContent = o.status === "new" ? "Ждёт выдачи — покажи экран администратору" : o.status === "issued" ? "Выдано в ".concat(mskTime(o.issued_at), " — приятного!") : o.status === "expired" ? "Заказ не забрали вовремя — он отменён" : "Заказ отменён";
+  setHTML($("os-items"), o.items.map((it) => {
+    const p = prod(it.product);
+    const v = p ? variant(p, it.variant) : null;
+    return '<div class="cline">'.concat(v ? '<img src="'.concat(v.img, '" alt="">') : "<div></div>", '<div><div class="cn">').concat(escapeHtml(it.name), "</div>").concat(it.label ? '<div class="cv">'.concat(escapeHtml(it.label), "</div>") : "", '</div><div class="total-badge">× ').concat(it.qty, "</div></div>");
+  }).join(""));
+  $("os-total").innerHTML = fmt(o.total) + '<i class="coin"></i>';
+  $("os-cancel").classList.toggle("hidden", o.status !== "new");
+}
+function openOrderScreen(o) {
+  osOrder = o;
+  if (!shopCat) loadShop().then(renderOrderScreen);
+  renderOrderScreen();
+  $("order-screen").classList.remove("hidden");
+  document.body.style.overflow = "hidden";
+  clearInterval(osClock);
+  clearInterval(osPoll);
+  const tick = () => {
+    $("os-clock").textContent = mskNow();
+    const t = $("os-timer");
+    if (osOrder && osOrder.status === "new" && osOrder.expires_at) {
+      const left = new Date(osOrder.expires_at).getTime() - Date.now();
+      t.textContent = left > 0 ? "Забрать до ".concat(mskTime(osOrder.expires_at), " · осталось ").concat(hms(left)) : "Время вышло";
+    } else t.textContent = "";
+  };
+  tick();
+  osClock = setInterval(tick, 1e3);
+  osPoll = setInterval(async () => {
+    if (!osOrder || osOrder.status !== "new") return;
+    try {
+      const r = await api("/api/shop/order_state", { initData, order_id: osOrder.id });
+      if (r.status !== osOrder.status) {
+        osOrder = r;
+        renderOrderScreen();
+        haptic(r.status === "issued" ? "win" : "light");
+        loadOrders();
+        loadMe().catch(() => {
+        });
+      }
+    } catch (e) {
+    }
+  }, 3e3);
+}
+function closeOrderScreen() {
+  clearInterval(osClock);
+  clearInterval(osPoll);
+  osOrder = null;
+  $("order-screen").classList.add("hidden");
+  document.body.style.overflow = "";
+}
+$("os-close").addEventListener("click", closeOrderScreen);
+$("os-cancel").addEventListener("click", async () => {
+  if (!osOrder || !await confirmTg("Отменить заказ и вернуть колизы на баланс?")) return;
+  try {
+    const r = await api("/api/shop/cancel", { initData, order_id: osOrder.id });
+    osOrder = r.order;
+    me.balance = r.balance;
+    me.withdraw = r.withdraw;
+    renderOrderScreen();
+    renderBalance();
+    loadOrders();
+    showToast(r.refunded ? "Заказ отменён — колизы вернулись" : "Заказ отменён. Срок колизов уже истёк — они сгорели");
+  } catch (e) {
+    showToast(e.message);
+  }
+});
+let rtTab = "volume";
+$("rt-tabs").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-tab]");
+  if (!b) return;
+  rtTab = b.dataset.tab;
+  document.querySelectorAll("#rt-tabs button").forEach((x) => x.classList.toggle("on", x === b));
+  $("rt-sub").textContent = "Загружаем…";
+  $("rt-volume").classList.toggle("hidden", rtTab !== "volume");
+  $("rt-friendly").classList.toggle("hidden", rtTab !== "friendly");
+  if (rtTab === "friendly") loadFriendly();
+  else loadRating();
+});
+async function loadFriendly() {
+  let r;
+  try {
+    r = await api("/api/rating/friendly", { initData });
+  } catch (e) {
+    return;
+  }
+  $("rt-sub").textContent = "".concat(r.month, ", итоги ").concat(r.ends);
+  const fv = (x) => "".concat(fmt(x.friends), " ").concat(plural(x.friends, "друг", "друга", "друзей"));
+  setHTML($("fr-podium"), podiumHtml(r.top, fv));
+  $("fr-prize").textContent = r.prizes.length ? fmt(r.prizes[0]) : "—";
+  $("fr-my-place").textContent = r.me.place || "—";
+  $("fr-my-cnt").textContent = fmt(r.me.friends);
+  setHTML($("fr-list"), rowsHtml(r.top.filter((x) => x.place > 3).slice(0, 47), fv));
+  $("fr-list").classList.toggle("hidden", r.top.length <= 3);
+  $("fr-last-wrap").classList.toggle("hidden", !r.last_winners.some((w) => w.nickname));
+  $("fr-last-title").textContent = "Итоги: ".concat(r.last_month.toLowerCase());
+  setHTML($("fr-last"), r.last_winners.filter((w) => w.nickname).map((w) => '<div class="rt-row"><div class="n">'.concat(w.place, '</div><div class="nick">').concat(escapeHtml(w.nickname), '</div><div class="vol">+').concat(fmt(w.amount), "</div></div>")).join(""));
+}
+$("fr-invite").addEventListener("click", () => $("invite-card").click());
+function renderVisits() {
+  if (!me || !me.visits) return;
+  const v = me.visits;
+  $("vs-count").textContent = v.count;
+  $("vs-count-label").textContent = "".concat(plural(v.count, "визит", "визита", "визитов"), " в этом месяце");
+  setHTML($("vs-steps"), v.steps.map((st) => '<div class="step'.concat(st.done ? " done" : "", '"><b>').concat(st.n, " ").concat(plural(st.n, "визит", "визита", "визитов"), "</b>\n    <span>").concat(st.done ? "получено" : "").concat(st.done ? "" : /^\d+$/.test(st.reward) ? "+".concat(st.reward, " ").concat(koliz(+st.reward)) : "бесплатный час", "</span></div>")).join(""));
+  const c = me.checkin || {};
+  $("vs-status").textContent = c.today === "pending" ? "Сегодняшний чек на проверке" : c.today === "approved" ? "Сегодня визит уже засчитан" : c.today === "rejected" ? "Прошлый чек не подошёл — пришли ещё раз" : "";
+  $("vs-upload").disabled = c.today === "pending" || c.today === "approved";
+  const n = v.next;
+  if (n && me.phone_verified && !(c.today === "pending" || c.today === "approved")) $("ci-sub").textContent = "".concat(v.count, " из ").concat(n.n, " до ").concat(/^\d+$/.test(n.reward) ? "+" + n.reward : "часа в подарок");
+}
+const profSel = /* @__PURE__ */ new Set();
+function renderProfile() {
+  if (!me) return;
+  const pr = me.profile || { all_games: [] };
+  if (document.activeElement !== $("prof-about")) $("prof-about").value = pr.about || "";
+  if (document.activeElement !== $("prof-rank")) $("prof-rank").value = pr.rank || "";
+  profSel.clear();
+  (pr.games || []).forEach((g) => profSel.add(g));
+  setHTML($("prof-games"), (pr.all_games || []).map((g) => '<button class="chip2'.concat(profSel.has(g) ? " on" : "", '" data-pg="').concat(escapeHtml(g), '">').concat(escapeHtml(g), "</button>")).join(""));
+  if (me.nickname) api("/api/profile/view", { initData, nickname: me.nickname }).then((r) => setHTML($("prof-badges"), badgesHtml(r.badges))).catch(() => {
+  });
+  else setHTML($("prof-badges"), '<div class="empty-state">Придумай никнейм — и начнёшь собирать значки</div>');
+}
+function badgesHtml(list) {
+  return list.map((b) => '<div class="badge2'.concat(b.done ? " on" : "", '"><i></i>').concat(escapeHtml(b.title), "</div>")).join("");
+}
+$("prof-games").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-pg]");
+  if (!b) return;
+  const g = b.dataset.pg;
+  if (profSel.has(g)) profSel.delete(g);
+  else if (profSel.size < 6) profSel.add(g);
+  else {
+    showToast("Не больше 6 игр");
+    return;
+  }
+  b.classList.toggle("on", profSel.has(g));
+});
+$("prof-save").addEventListener("click", async () => {
+  $("prof-save").disabled = true;
+  try {
+    const r = await api("/api/profile/save", { initData, about: $("prof-about").value, rank: $("prof-rank").value, games: Array.from(profSel) });
+    me.profile = { about: r.about, games: r.games, rank: r.rank, all_games: r.all_games };
+    setHTML($("prof-badges"), badgesHtml(r.badges));
+    showToast("Профиль сохранён");
+  } catch (e) {
+    showToast(e.message);
+  } finally {
+    $("prof-save").disabled = false;
+  }
+});
+async function openPlayer(nick) {
+  if (!nick) return;
+  if (me && me.nickname && nick.toLowerCase() === me.nickname.toLowerCase()) {
+    showPanel("profile");
+    return;
+  }
+  setHTML($("pl-body"), '<div class="empty-state">Загружаем…</div>');
+  showPanel("player");
+  try {
+    const r = await api("/api/profile/view", { initData, nickname: nick });
+    setHTML($("pl-body"), '<div class="title">'.concat(escapeHtml(r.nickname), "</div>\n      ").concat(r.rank ? '<div class="lead" style="color:var(--accent);font-weight:600">'.concat(escapeHtml(r.rank), "</div>") : '<div class="lead"></div>', "\n      ").concat(r.about ? '<div class="card" style="font-size:15px;line-height:1.5">'.concat(escapeHtml(r.about), "</div>") : "", "\n      ").concat(r.games.length ? '<div class="pl-games">'.concat(r.games.map((g) => "<span>".concat(escapeHtml(g), "</span>")).join(""), "</div>") : "", '\n      <div class="h2">Значки</div><div class="badges">').concat(badgesHtml(r.badges), "</div>"));
+  } catch (e) {
+    setHTML($("pl-body"), '<div class="empty-state">'.concat(escapeHtml(e.message), "</div>"));
+  }
+}
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-nick]");
+  if (t) openPlayer(t.dataset.nick);
+});
+const tm = { game: null, day: 0, h: 20, m: 0, need: 1, built: false, games: [], focus: null };
+function renderTmDays() {
+  setHTML($("tm-days"), Array.from({ length: 7 }, (_, i) => {
+    const d = mskDate(i);
+    const top = i === 0 ? "Сегодня" : i === 1 ? "Завтра" : WEEKDAYS[d.getUTCDay()];
+    return '<button class="day'.concat(tm.day === i ? " on" : "", '" data-tday="').concat(i, '" style="background:').concat(tm.day === i ? "" : "var(--surface-2)", '"><b>').concat(top, "</b><small>").concat(d.getUTCDate(), ".").concat(pad2(d.getUTCMonth() + 1), "</small></button>");
+  }).join(""));
+}
+function renderTmGames() {
+  setHTML($("tm-games"), tm.games.map((g) => '<button class="chip2'.concat(tm.game === g ? " on" : "", '" data-tg="').concat(escapeHtml(g), '">').concat(escapeHtml(g), "</button>")).join(""));
+}
+async function loadTeam() {
+  let r;
+  try {
+    r = await api("/api/team/list", { initData });
+  } catch (e) {
+    setHTML($("tm-list"), '<div class="empty-state">'.concat(escapeHtml(e.message), "</div>"));
+    return;
+  }
+  tm.games = r.games;
+  if (!tm.game) tm.game = (me && me.profile && me.profile.games || [])[0] || r.games[0];
+  renderTmGames();
+  setHTML($("tm-list"), r.posts.length ? r.posts.map((p) => {
+    const slots2 = Array.from({ length: p.need }, (_, i) => '<i class="'.concat(i < p.joined ? "on" : "", '"></i>')).join("");
+    const btn = p.mine ? '<button class="secondary" data-tclose="'.concat(p.id, '">Закрыть</button>') : p.i_joined ? '<button class="secondary" disabled>Ты в команде</button>' : p.full ? '<button class="secondary" disabled>Собрана</button>' : '<button class="primary" data-tjoin="'.concat(p.id, '">Я в деле</button>');
+    return '<div class="tpost'.concat(tm.focus === p.id ? " focus" : "", '" id="tp-').concat(p.id, '"><div class="tpost-top"><div class="tpost-game">').concat(escapeHtml(p.game), '</div><div class="tpost-when">').concat(escapeHtml(p.when), '</div></div>\n      <div class="tpost-meta"><span class="linkname" data-nick="').concat(escapeHtml(p.author), '">').concat(escapeHtml(p.author), "</span>").concat(p.comment ? ": ".concat(escapeHtml(p.comment)) : "", '</div>\n      <div class="tpost-row"><div class="slots">').concat(slots2, "</div>").concat(btn, "</div></div>");
+  }).join("") : '<div class="card"><div class="empty-state">Пока никто не ищет — создай первую заявку.</div></div>');
+  $("tile-team-sub").textContent = r.posts.length ? "".concat(r.posts.length, " ").concat(plural(r.posts.length, "заявка", "заявки", "заявок")) : "найди с кем играть";
+  if (tm.focus && $("tp-" + tm.focus)) {
+    $("tp-" + tm.focus).scrollIntoView({ block: "center" });
+    tm.focus = null;
+  }
+}
+$("tm-new").addEventListener("click", () => {
+  if (!me || !me.phone_verified || !me.nickname) {
+    showToast("Сначала подтверди номер и придумай никнейм на главной");
+    return;
+  }
+  const f = $("tm-form");
+  f.classList.toggle("hidden");
+  if (!tm.built) {
+    tm.built = true;
+    const now = mskDate(0);
+    tm.h = Math.min(23, now.getUTCHours() + 1);
+    tm.m = 0;
+    buildWheel($("tm-hours"), 24, (v) => {
+      tm.h = v;
+    });
+    buildWheel($("tm-mins"), 60, (v) => {
+      tm.m = v;
+    });
+    renderTmDays();
+  }
+  setTimeout(() => {
+    setWheel($("tm-hours"), tm.h);
+    setWheel($("tm-mins"), tm.m);
+  }, 30);
+});
+$("tm-games").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-tg]");
+  if (b) {
+    tm.game = b.dataset.tg;
+    renderTmGames();
+  }
+});
+$("tm-days").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-tday]");
+  if (b) {
+    tm.day = +b.dataset.tday;
+    renderTmDays();
+  }
+});
+$("tm-minus").addEventListener("click", () => {
+  tm.need = Math.max(1, tm.need - 1);
+  $("tm-need").textContent = tm.need;
+});
+$("tm-plus").addEventListener("click", () => {
+  tm.need = Math.min(9, tm.need + 1);
+  $("tm-need").textContent = tm.need;
+});
+$("tm-submit").addEventListener("click", async () => {
+  if (!tm.game) {
+    showToast("Выбери игру");
+    return;
+  }
+  $("tm-submit").disabled = true;
+  try {
+    await api("/api/team/create", { initData, game: tm.game, day: tm.day, hour: tm.h, minute: tm.m, need: tm.need, comment: $("tm-comment").value });
+    $("tm-form").classList.add("hidden");
+    $("tm-comment").value = "";
+    showToast("Заявка опубликована — она уже в чате клуба");
+    haptic("win");
+    loadTeam();
+  } catch (e) {
+    showToast(e.message);
+  } finally {
+    $("tm-submit").disabled = false;
+  }
+});
+$("tm-list").addEventListener("click", async (e) => {
+  const j = e.target.closest("[data-tjoin]"), c = e.target.closest("[data-tclose]");
+  if (!j && !c) return;
+  try {
+    if (j) {
+      j.disabled = true;
+      await api("/api/team/join", { initData, post_id: +j.dataset.tjoin });
+      showToast("Готово — бот прислал контакт автора");
+      haptic("win");
+    }
+    if (c && await confirmTg("Закрыть заявку?")) await api("/api/team/close", { initData, post_id: +c.dataset.tclose });
+  } catch (err) {
+    showToast(err.message);
+  }
+  loadTeam();
+});
+const EV_ICONS = {
+  football: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5l3.8 2.8-1.4 4.5H9.6l-1.4-4.5z"/><path d="M12 3v4.5M15.8 10.3l4.6-1.5M14.4 14.8l2.8 3.9M9.6 14.8l-2.8 3.9M8.2 10.3L3.6 8.8"/>',
+  hockey: '<path d="M6 3l6.5 12.5H19a2 2 0 010 4h-7.6a2 2 0 01-1.8-1.1L3 5"/><ellipse cx="17" cy="8" rx="3.5" ry="1.6"/><path d="M13.5 8v1.8c0 .9 1.6 1.6 3.5 1.6s3.5-.7 3.5-1.6V8"/>',
+  basketball: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3v18M5.6 5.6c2.2 1.8 3.4 4 3.4 6.4s-1.2 4.6-3.4 6.4M18.4 5.6C16.2 7.4 15 9.6 15 12s1.2 4.6 3.4 6.4"/>',
+  fight: '<path d="M8 21h8.5v-4c1.6-1 2.5-2.6 2.5-4.6V8a5 5 0 00-5-5h-2.5A5.5 5.5 0 006 8.5V12"/><path d="M6 12a2.2 2.2 0 000 4.4h4.5a2 2 0 000-4H8M8 17v4M8 17h8.5"/>',
+  shooter: '<circle cx="12" cy="12" r="7"/><path d="M12 2.5v5M12 16.5v5M2.5 12h5M16.5 12h5"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/>',
+  dota: '<path d="M14.5 4.5L20 4v5.5L9.5 20 4 14.5z"/><path d="M7 12l5 5M3.5 20.5l3-3M15 9l-2 2"/>',
+  fifa: '<rect x="2.5" y="7" width="19" height="11" rx="5.5"/><path d="M7.5 10.5v4M5.5 12.5h4"/><circle cx="15.5" cy="11.5" r="1" fill="currentColor" stroke="none"/><circle cx="18" cy="14" r="1" fill="currentColor" stroke="none"/>',
+  game: '<rect x="2.5" y="7" width="19" height="11" rx="5.5"/><path d="M7.5 10.5v4M5.5 12.5h4"/><circle cx="15.5" cy="11.5" r="1" fill="currentColor" stroke="none"/><circle cx="18" cy="14" r="1" fill="currentColor" stroke="none"/>',
+  tournament: '<path d="M8 21h8M12 16.5V21M7 3.5h10V9a5 5 0 01-10 0z"/><path d="M7 5.5H4v1.5a3.5 3.5 0 003.4 3.5M17 5.5h3v1.5a3.5 3.5 0 01-3.4 3.5"/>',
+  night: '<path d="M20 14.5A8.5 8.5 0 019.5 4a8.5 8.5 0 1010.5 10.5z"/><path d="M16.5 3.5v3M15 5h3M20 8.5v2M19 9.5h2"/>',
+  movie: '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M7.5 4.5v15M16.5 4.5v15M3 9h4.5M3 15h4.5M16.5 9H21M16.5 15H21"/>',
+  party: '<path d="M9 18V5.5l11-2.5v12.5"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="15.5" r="3"/><path d="M9 9.5l11-2.5"/>',
+  quiz: '<circle cx="12" cy="12" r="9"/><path d="M9.3 9.3a2.8 2.8 0 015.4 1c0 1.9-2.7 2.4-2.7 4.2"/><circle cx="12" cy="17.3" r=".9" fill="currentColor" stroke="none"/>',
+  birthday: '<path d="M4 20.5h16V13a2 2 0 00-2-2H6a2 2 0 00-2 2z"/><path d="M4 15.5c1.4 1.2 2.8 1.2 4 0s2.6-1.2 4 0 2.6 1.2 4 0 2.6-1.2 4 0M12 11V7.5"/><path d="M12 5.2c.9-.8 1-1.8 0-3-1 1.2-.9 2.2 0 3z"/>',
+  promo: '<path d="M18.5 5.5l-13 13"/><circle cx="7.5" cy="7.5" r="2.5"/><circle cx="16.5" cy="16.5" r="2.5"/>',
+  tv: '<rect x="2.5" y="4.5" width="19" height="12.5" rx="2.5"/><path d="M8 21h8M12 17v4M10 8.5v5l4.3-2.5z"/>',
+  event: '<path d="M12 3l2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.5l-5.4 3 1.2-6-4.5-4.2 6.1-.7z"/>'
+};
+const EV_COLORS = {
+  football: "#3DDC84",
+  hockey: "#5AC8FA",
+  basketball: "#FF8A3D",
+  fight: "#FF4D6A",
+  shooter: "#FFA51F",
+  dota: "#FF5A4E",
+  fifa: "#3DDC84",
+  game: "#2FD3C6",
+  tournament: "#F5E92E",
+  night: "#9B8CFF",
+  movie: "#5B8CFF",
+  party: "#FF6BC1",
+  quiz: "#FFB547",
+  birthday: "#FF8FB1",
+  promo: "#F5E92E",
+  tv: "#5AC8FA",
+  event: "#F5E92E"
+};
+function evIcon(kind, cls, sw) {
+  return '<svg class="'.concat(cls || "", '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="').concat(sw || 1.6, '" stroke-linecap="round" stroke-linejoin="round">').concat(EV_ICONS[kind] || EV_ICONS.event, "</svg>");
+}
+function hexA(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return "rgba(".concat(n >> 16, ",").concat(n >> 8 & 255, ",").concat(n & 255, ",").concat(a, ")");
+}
+function evHead(x) {
+  const k = EV_ICONS[x.kind] ? x.kind : "event", c = EV_COLORS[k];
+  const chip = '<span class="evp-chip">'.concat(evIcon(k, "", 2)).concat(escapeHtml(x.kind_label || "Событие"), "</span>");
+  if (x.img) return '<div class="evc-ph" style="--ec:'.concat(c, '"><img src="').concat(x.img, '" alt="">').concat(chip, "</div>");
+  return '<div class="evp" style="--ec:'.concat(c, ";--eg:").concat(hexA(c, 0.26), '">').concat(chip).concat(evIcon(k, "evp-ghost", 1.4)).concat(evIcon(k, "evp-big", 1.15), '\n    <div class="evp-date"><b>').concat(escapeHtml(x.date), "</b><span>").concat(escapeHtml(x.dow), ", ").concat(escapeHtml(x.time), "</span></div></div>");
+}
+async function loadEvents() {
+  let r;
+  try {
+    r = await api("/api/events", { initData });
+  } catch (e) {
+    return;
+  }
+  const ev = r.events;
+  setHTML($("ev-list"), ev.length ? ev.map((x) => '<div class="evc" id="evc-'.concat(x.id, '">').concat(evHead(x), '<div class="evc-body">\n      ').concat(x.img ? '<div class="evc-date"><b>'.concat(escapeHtml(x.date), "</b><span>").concat(escapeHtml(x.dow), ", ").concat(escapeHtml(x.time), "</span></div>") : "", '\n      <div class="evc-title">').concat(escapeHtml(x.title), "</div>").concat(x.description ? '<div class="evc-desc">'.concat(escapeHtml(x.description), "</div>") : "", '\n      <div class="tpost-row"><span class="hint" style="margin:0">').concat(x.going ? "Пойдут: ".concat(x.going) : "Будь первым", '</span>\n      <button class="').concat(x.i_go ? "secondary" : "primary", '" style="width:auto;padding:10px 18px" data-go-ev="').concat(x.id, '" data-on="').concat(x.i_go ? 1 : 0, '">').concat(x.i_go ? "Ты идёшь" : "Пойду", "</button></div></div></div>")).join("") : '<div class="card"><div class="empty-state">Скоро здесь появятся турниры и события клуба.</div></div>');
+  const next = ev[0];
+  $("tile-events-sub").textContent = next ? "".concat(next.date, ": ").concat(next.title) : "события клуба";
+  if (next && EV_ICONS[next.kind]) {
+    const ico = $("tile-events-ico");
+    ico.setAttribute("viewBox", "-2 -2 28 28");
+    ico.innerHTML = '<g fill="none" stroke="#f5e92e" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">'.concat(EV_ICONS[next.kind], "</g>");
+  }
+}
+$("ev-list").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-go-ev]");
+  if (!b) return;
+  b.disabled = true;
+  try {
+    await api("/api/event/going", { initData, event_id: +b.dataset.goEv, going: b.dataset.on !== "1" });
+    if (b.dataset.on !== "1") {
+      showToast("Записали — бот напомнит за 2 часа");
+      haptic("win");
+    }
+  } catch (err) {
+    showToast(err.message);
+  }
+  loadEvents();
+});
 $("idea-submit").addEventListener("click", async () => {
   const textEl = $("idea-text");
   const text = textEl.value.trim();
@@ -2591,30 +4018,235 @@ $("idea-submit").addEventListener("click", async () => {
     showToast(e.message);
   }
 });
+const WEEKDAYS = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
+const bk = { day: 0, h: 19, m: 0, built: false };
+function mskDate(offsetDays) {
+  return new Date(Date.now() + 3 * 3600 * 1e3 + offsetDays * 864e5);
+}
+function buildWheel(el, count, pick) {
+  el.innerHTML = '<div class="pad"></div>' + Array.from({ length: count }, (_, i) => '<div data-v="'.concat(i, '">').concat(pad2(i), "</div>")).join("") + '<div class="pad"></div>';
+  let t = 0;
+  el.addEventListener("scroll", () => {
+    clearTimeout(t);
+    const idx = Math.max(0, Math.min(count - 1, Math.round(el.scrollTop / 44)));
+    el.querySelectorAll("[data-v]").forEach((d) => d.classList.toggle("sel", +d.dataset.v === idx));
+    t = setTimeout(() => {
+      pick(idx);
+      if (Math.abs(el.scrollTop - idx * 44) > 1) el.scrollTo({ top: idx * 44, behavior: "smooth" });
+    }, 120);
+  });
+  el.addEventListener("click", (e) => {
+    const d = e.target.closest("[data-v]");
+    if (d) el.scrollTo({ top: +d.dataset.v * 44, behavior: "smooth" });
+  });
+}
+function setWheel(el, v) {
+  el.scrollTop = v * 44;
+  el.querySelectorAll("[data-v]").forEach((d) => d.classList.toggle("sel", +d.dataset.v === v));
+}
+function renderDays() {
+  setHTML($("bk-days"), Array.from({ length: 14 }, (_, i) => {
+    const d = mskDate(i);
+    const top = i === 0 ? "Сегодня" : i === 1 ? "Завтра" : WEEKDAYS[d.getUTCDay()];
+    return '<button class="day'.concat(bk.day === i ? " on" : "", '" data-day="').concat(i, '"><b>').concat(top, "</b><small>").concat(d.getUTCDate(), ".").concat(pad2(d.getUTCMonth() + 1), "</small></button>");
+  }).join(""));
+}
+function bookingText() {
+  const d = mskDate(bk.day);
+  const day = bk.day === 0 ? "сегодня" : bk.day === 1 ? "завтра" : WEEKDAYS[d.getUTCDay()].toLowerCase();
+  return "".concat(day, ", ").concat(d.getUTCDate(), ".").concat(pad2(d.getUTCMonth() + 1), " в ").concat(pad2(bk.h), ":").concat(pad2(bk.m));
+}
+function renderBkSummary() {
+  const n = hall.sel.length;
+  $("bk-summary").textContent = "".concat(bookingText()[0].toUpperCase()).concat(bookingText().slice(1)) + (n ? " · ".concat(n, " ").concat(plural(n, "место", "места", "мест")) : "");
+}
+function bookingOnPanel() {
+  if (!bk.built) {
+    bk.built = true;
+    const now = mskDate(0);
+    let h = now.getUTCHours() + 1, m = now.getUTCMinutes() < 30 ? 30 : 0;
+    if (m === 0) h += 1;
+    if (h > 23) {
+      h = h - 24;
+      bk.day = 1;
+    }
+    bk.h = h;
+    bk.m = m;
+    buildWheel($("bk-hours"), 24, (v) => {
+      bk.h = v;
+      renderBkSummary();
+    });
+    buildWheel($("bk-mins"), 60, (v) => {
+      bk.m = v;
+      renderBkSummary();
+    });
+    renderDays();
+    renderHall();
+  }
+  setTimeout(() => {
+    setWheel($("bk-hours"), bk.h);
+    setWheel($("bk-mins"), bk.m);
+  }, 30);
+  renderBkSummary();
+}
+$("bk-days").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-day]");
+  if (!b) return;
+  bk.day = +b.dataset.day;
+  renderDays();
+  renderBkSummary();
+});
+const HALL_W = 76, HALL_H = 82;
+const HALL_ZONES = {
+  std: { name: "Standart", c: "#DADDE4", specs: ["RTX 4060", "Core i5-13400KF", 'ASUS 27" 280 Гц', "Периферия ASUS ROG"], note: "Общий зал — места рядами, удобно сесть компанией" },
+  pro: { name: "Bootcamp VIP Pro", c: "#5B8CFF", specs: ["RTX 4070", "Core i5-13600KF", 'ASUS 27" 280 Гц', "Периферия ASUS ROG"], note: "Отдельная комната на 5 мест — для команды" },
+  ultra: { name: "Ultra Duo", c: "#B07CFF", specs: ["RTX 5070", "Core i5-14600KF", 'ASUS 27" 280 Гц', "ROG и Logitech"], note: "Комната на двоих — самые мощные ПК клуба" },
+  ps: { name: "PS Zone", c: "#2FD3C6", specs: ['PS5 + TV 65"', "PS Plus Deluxe — 600+ игр", "EA Play", "FIFA, UFC 5, MK 1, NHL, GTA 5"], note: "Без ограничения по числу игроков на одной PS" }
+};
+const HALL_SEATS = [];
+const HALL_MARKS = [];
+(function buildHall() {
+  const seat = (id, z, n, x, y, w, h, tv) => HALL_SEATS.push({ id, z, n, x, y, w, h, tv });
+  [19, 20, 21].forEach((n, i) => seat("PC" + n, "std", n, 2.5, 9.6 + i * 7.3, 6.9, 6.2));
+  [28, 27, 26].forEach((n, i) => seat("PC" + n, "std", n, 25.8, 1.2 + i * 7.3, 6.9, 6.2));
+  [18, 17, 16, 15, 14, 13].forEach((n, i) => seat("PC" + n, "std", n, 31 + i * 7.45, 50, 6.8, 6.6));
+  seat("TV1", "ps", "TV1", 35, 1.2, 16.4, 9.4, true);
+  seat("TV2", "ps", "TV2", 58.6, 1.2, 16.4, 9.4, true);
+  seat("TV3", "ps", "TV3", 46.4, 35.4, 17, 9.4, true);
+  seat("VIP+ PC1", "ultra", 1, 16, 73.4, 7.4, 6.8);
+  seat("VIP+ PC3", "ultra", 3, 28.6, 73.4, 7.4, 6.8);
+  [4, 5, 6, 7, 8].forEach((n, i) => seat("VIP" + n, "pro", n, 38.6 + i * 7.45, 73.4, 6.8, 6.8));
+  const m = (o) => HALL_MARKS.push(o);
+  m({ t: "area", z: "std", x: 0.8, y: 0, w: 33, h: 31.6 });
+  m({ t: "area", z: "ps", x: 34, y: 0, w: 42, h: 46 });
+  m({ t: "area", z: "std", x: 30, y: 48.4, w: 46, h: 13.4 });
+  m({ t: "area", z: "ultra", x: 14.6, y: 66.4, w: 22.6, h: 15.6 });
+  m({ t: "area", z: "pro", x: 37.6, y: 66.4, w: 38.4, h: 15.6 });
+  m({ t: "lbl", z: "std", v: 1, x: 18.2, y: 3, text: "Standart" });
+  m({ t: "lbl", z: "ps", v: 1, x: 53.6, y: 11.8, text: "PS zone" });
+  m({ t: "lbl", z: "std", x: 31.5, y: 58.6, text: "Standart" });
+  m({ t: "lbl", z: "ultra", x: 16, y: 68.6, text: "Ultra duo" });
+  m({ t: "lbl", z: "pro", x: 39, y: 68.6, text: "Bootcamp VIP Pro" });
+  m({ t: "sofa", x: 36.5, y: 12.4, w: 13.4, h: 7.6 });
+  m({ t: "sofa", x: 60.1, y: 12.4, w: 13.4, h: 7.6 });
+  m({ t: "sofa", up: 1, x: 48.2, y: 26, w: 13.4, h: 7.6 });
+  m({ t: "desk", x: 0.8, y: 34, w: 27, h: 30 });
+})();
+const hall = { sel: [], focus: null };
+const pct = (v, total) => (v / total * 100).toFixed(3) + "%";
+function renderHall() {
+  const box = (o) => "left:".concat(pct(o.x, HALL_W), ";top:").concat(pct(o.y, HALL_H), ";width:").concat(pct(o.w, HALL_W), ";height:").concat(pct(o.h, HALL_H));
+  const zf = (z2) => hall.focus === z2 ? " zf" : "";
+  let html = HALL_MARKS.map((o) => {
+    if (o.t === "area") return '<div class="h-area'.concat(zf(o.z), '" style="').concat(box(o), ";background:").concat(hexA(HALL_ZONES[o.z].c, o.z === "std" ? 0.035 : 0.07), '"></div>');
+    if (o.t === "lbl") return '<div class="h-lbl'.concat(o.v ? " v" : "").concat(zf(o.z), '" style="left:').concat(pct(o.x, HALL_W), ";top:").concat(pct(o.y, HALL_H), ";color:").concat(hexA(HALL_ZONES[o.z].c, 0.7), '">').concat(o.text, "</div>");
+    if (o.t === "sofa") return '<div class="h-deco sofa'.concat(o.up ? " up" : "", '" style="').concat(box(o), '"></div>');
+    if (o.t === "desk") return '<div class="h-desk" style="'.concat(box(o), '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.6 3.1-6 7-6s7 2.4 7 6"/></svg>Стойка<br>администратора</div>');
+    return "";
+  }).join("");
+  html += HALL_SEATS.map((st) => {
+    const on = hall.sel.indexOf(st.id) >= 0, c = HALL_ZONES[st.z].c;
+    return '<button class="seat'.concat(st.tv ? " tv" : "").concat(on ? " on" : "").concat(zf(st.z), '" data-seat="').concat(st.id, '" style="').concat(box(st), ";border-color:").concat(on ? "" : hexA(c, 0.55), '">').concat(st.tv ? "<span>".concat(st.n, "<small>PS5</small></span>") : st.n, "</button>");
+  }).join("");
+  setHTML($("hall-in"), html);
+  $("hall").classList.toggle("focus", !!hall.focus);
+  setHTML($("hall-zones"), Object.keys(HALL_ZONES).map((k) => '<button class="zchip'.concat(hall.focus === k ? " on" : "", '" data-hz="').concat(k, '" style="--zc:').concat(HALL_ZONES[k].c, '"><i style="background:').concat(HALL_ZONES[k].c, '"></i>').concat(HALL_ZONES[k].name, "</button>")).join(""));
+  const zk = hall.focus || (hall.sel.length ? HALL_SEATS.find((x) => x.id === hall.sel[hall.sel.length - 1]).z : "std");
+  const z = HALL_ZONES[zk], n = HALL_SEATS.filter((x) => x.z === zk).length;
+  setHTML($("zinfo"), '<div class="zinfo-h"><b style="color:'.concat(zk === "std" ? "var(--text)" : z.c, '">').concat(z.name, "</b><span>").concat(zk === "ps" ? n + " приставки" : n + " " + plural(n, "место", "места", "мест"), '</span></div>\n    <div class="zspecs">').concat(z.specs.map((t) => "<span>".concat(escapeHtml(t), "</span>")).join(""), '</div><div class="zinfo-note">').concat(z.note, "</div>"));
+  const groups = seatGroups();
+  setHTML($("bk-pick"), hall.sel.length ? "".concat(groups.map((g) => "<b>".concat(g.name, "</b> ").concat(g.items.join(", "))).join("<br>"), "<small>").concat(hall.sel.length, " ").concat(plural(hall.sel.length, "место", "места", "мест"), " · занятость проверит администратор</small>") : "Места не выбраны<small>Отметь одно или несколько — рядом для компании</small>");
+  $("bk-clear").classList.toggle("hidden", !hall.sel.length);
+}
+function seatGroups() {
+  const out = [];
+  Object.keys(HALL_ZONES).forEach((k) => {
+    const items = HALL_SEATS.filter((x) => x.z === k && hall.sel.indexOf(x.id) >= 0).sort((a, b) => (a.tv ? 0 : a.n) - (b.tv ? 0 : b.n) || (a.id < b.id ? -1 : 1)).map((x) => x.tv ? x.n : (k === "std" ? "PC" : k === "pro" ? "VIP " : "VIP+ ") + x.n);
+    if (items.length) out.push({ name: HALL_ZONES[k].name, items });
+  });
+  return out;
+}
+$("hall-in").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-seat]");
+  if (!b) return;
+  const id = b.dataset.seat, i = hall.sel.indexOf(id);
+  if (i >= 0) hall.sel.splice(i, 1);
+  else {
+    if (hall.sel.length >= 10) {
+      showToast("Не больше 10 мест в одной брони");
+      return;
+    }
+    hall.sel.push(id);
+  }
+  hall.focus = null;
+  haptic("light");
+  renderHall();
+  renderBkSummary();
+});
+$("hall-zones").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-hz]");
+  if (!b) return;
+  hall.focus = hall.focus === b.dataset.hz ? null : b.dataset.hz;
+  renderHall();
+});
+$("bk-clear").addEventListener("click", () => {
+  hall.sel = [];
+  renderHall();
+  renderBkSummary();
+});
 $("booking-submit").addEventListener("click", async () => {
   const name = $("b-name").value.trim();
   const phone = $("b-phone").value.trim();
-  const timeText = $("b-time").value.trim();
-  const seatsText = $("b-seats").value.trim();
   const notes = $("b-notes").value.trim();
-  if (!name || !phone || !timeText) {
-    showToast("Заполни имя, телефон и время");
+  if (!hall.sel.length) {
+    showToast("Отметь места на схеме зала");
     return;
   }
+  if (!name || !phone) {
+    showToast("Заполни имя и телефон");
+    return;
+  }
+  if (bk.day === 0) {
+    const now = mskDate(0);
+    if (bk.h * 60 + bk.m < now.getUTCHours() * 60 + now.getUTCMinutes()) {
+      showToast("Это время сегодня уже прошло — выбери другое");
+      return;
+    }
+  }
+  const btn = $("booking-submit");
+  btn.disabled = true;
   try {
-    await api("/api/booking", { initData, name, phone, time_text: timeText, seats_text: seatsText, notes });
+    await api("/api/booking", { initData, name, phone, time_text: bookingText(), seats_text: seatGroups().map((g) => "".concat(g.name, ": ").concat(g.items.join(", "))).join("; "), notes });
     showToast("Заявка отправлена — администратор скоро подтвердит");
-    ["b-name", "b-phone", "b-time", "b-seats", "b-notes"].forEach((id) => $(id).value = "");
+    $("b-notes").value = "";
+    haptic("win");
   } catch (e) {
     showToast(e.message);
+  } finally {
+    btn.disabled = false;
   }
 });
 Promise.all([loadTiers(), loadMe()]).then(() => {
-  const battleParam = parseInt(new URLSearchParams(location.search).get("battle"), 10);
+  const qs = new URLSearchParams(location.search);
+  const battleParam = parseInt(qs.get("battle"), 10);
   if (battleParam && me) {
     bt.id = battleParam;
     showPanel("battle");
+  } else if (me && ["shop", "rating", "activities", "booking", "battle", "profile", "team", "events", "visits"].indexOf(qs.get("panel")) >= 0) {
+    if (qs.get("panel") === "team" && qs.get("item")) tm.focus = +qs.get("item");
+    showPanel(qs.get("panel"));
   }
+  if (me) loadEvents();
+  if (me && me.shop_active_orders) loadOrders();
+  if (me && me.phone_verified) {
+    api("/api/battle/list", { initData }).then((d) => {
+      const n = d.incoming.length + d.active.filter((a) => a.your_move).length;
+      $("tile-battle-dot").textContent = n;
+      $("tile-battle-dot").classList.toggle("hidden", !n);
+    }).catch(() => {
+    });
+  }
+  if (me && me.nickname) loadRating();
 }).catch((e) => {
   showToast(e.message);
   if (window.__reportError) window.__reportError("load", e.message);
