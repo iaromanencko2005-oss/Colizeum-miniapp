@@ -16,8 +16,9 @@
 Тратить колизы можно ОДИН раз в сутки: либо заказ в магазине (до 300 колизов),
 либо списание на карту гостя — не то и другое вместе.
 Заказ нужно забрать за SHOP_ORDER_TTL_MIN минут (по умолчанию 3 часа) — на
-экране заказа идёт обратный отсчёт. Не забрал — заказ отменяется; колизы
-возвращаются, только если они ещё не сгорели бы по правилу «сутки».
+экране заказа идёт обратный отсчёт. Гость сам заказ не отменяет; не забрал
+вовремя — заказ закрывается, колизы списываются. Вернуть колизы может только
+администратор, отменив заказ кнопкой (например, если товара нет в баре).
 
 Каталог при первом запуске берётся из shop_catalog.json (фото там же).
 Дальше цены и наличие меняются командами в боте: /shop, /shop_price,
@@ -43,7 +44,8 @@ MAX_BAR_PRICE = int(os.getenv("SHOP_MAX_BAR_PRICE", "250"))   # дороже э�
 ORDER_TTL = timedelta(minutes=int(os.getenv("SHOP_ORDER_TTL_MIN", "180")))
 SHOP_MARKUP_NOTE = os.getenv(
     "SHOP_NOTE",
-    "Цены указаны в колизах (1 колиз = 1 ₽) и примерно на 20% выше, чем в баре клуба.")
+    "Цены указаны в колизах (1 колиз = 1 ₽) и примерно на 20% выше, чем в баре клуба. "
+    "Заказ не отменяется: забери его за 3 часа, иначе колизы спишутся.")
 
 CATEGORIES = [("energy", "Энергетики"), ("soda", "Газировка"), ("tea", "Чай, кофе, сок"),
               ("water", "Вода"), ("sweets", "Сладкое")]
@@ -191,9 +193,12 @@ def mark_issued(db, order_id: int, by: str):
     return db.get(ShopOrder, order_id) if n == 1 else None
 
 
-def cancel_order(db, order_id: int, reason: str, client_id: int | None = None, status: str = "cancelled"):
-    """Отменить заказ. Колизы возвращаются, только если по правилу «сутки» они бы
-    ещё не сгорели. client_id — если отменяет сам гость (только свой заказ).
+def cancel_order(db, order_id: int, reason: str, client_id: int | None = None, status: str = "cancelled",
+                 refund: bool = True):
+    """Отменить заказ. Гость сам заказ не отменяет (иначе можно забрать напиток и
+    отменить), поэтому возврат бывает только при отмене администратором — и только
+    если по правилу «сутки» колизы ещё не сгорели. Просроченный заказ (не забрали
+    вовремя) — refund=False: колизы списываются.
     Возвращает (заказ, вернули_ли_колизы) или None, если заказ уже выдан/отменён."""
     q = db.query(ShopOrder).filter(ShopOrder.id == order_id, ShopOrder.status == "new")
     if client_id is not None:
@@ -204,7 +209,7 @@ def cancel_order(db, order_id: int, reason: str, client_id: int | None = None, s
         db.rollback()
         return None
     o = db.get(ShopOrder, order_id)
-    refunded = refund_allowed(o.bonus_deadline)
+    refunded = refund and refund_allowed(o.bonus_deadline)
     if refunded:
         db.query(Client).filter(Client.id == o.client_id).update(
             {Client.balance: func.coalesce(Client.balance, 0) + o.total}, synchronize_session=False)
@@ -213,19 +218,21 @@ def cancel_order(db, order_id: int, reason: str, client_id: int | None = None, s
         if o.bonus_deadline and (c.bonus_expires_at is None or c.bonus_expires_at > o.bonus_deadline):
             c.bonus_expires_at = o.bonus_deadline
     else:
-        db.add(BonusBurn(client_id=o.client_id, amount=o.total, reason="order_refund_late"))
+        db.add(BonusBurn(client_id=o.client_id, amount=o.total,
+                         reason="order_refund_late" if refund else "order_not_picked"))
     db.commit()
     db.refresh(o)
     return o, refunded
 
 
 def expire_due(db) -> list[tuple]:
-    """Заказы, которые не забрали вовремя, — отменяем. Возвращает [(заказ, вернули_ли)]."""
+    """Заказы, которые не забрали вовремя, — закрываем без возврата колизов.
+    Возвращает [(заказ, вернули_ли)] — вернули всегда False."""
     now = datetime.utcnow()
     out = []
     for (oid,) in db.query(ShopOrder.id).filter(ShopOrder.status == "new", ShopOrder.expires_at.isnot(None),
                                                 ShopOrder.expires_at <= now).all():
-        r = cancel_order(db, oid, "не забрали вовремя", status="expired")
+        r = cancel_order(db, oid, "не забрали вовремя", status="expired", refund=False)
         if r:
             out.append(r)
     return out

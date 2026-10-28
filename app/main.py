@@ -51,7 +51,8 @@ from . import battles
 from . import rating
 from . import shop, checkin, group, bonus_expiry, social
 from .models import TeamPost, ClubEvent, EventGoing
-from . import bot_extra, bot_social
+from . import bot_extra, bot_social, access, news
+from .models import ClubNews
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("colizeum")
@@ -330,6 +331,13 @@ def require_verified(client: Client):
         raise HTTPException(status_code=403, detail="Сначала подтверди номер телефона в кабинете")
 
 
+def require_games_unlocked(db: Session, client: Client):
+    """Бесплатные игры — только после пополнения в клубе (см. access.py)."""
+    if access.is_locked(db, client):
+        raise HTTPException(status_code=403, detail=f"Бесплатные игры открываются после пополнения в клубе "
+                                                    f"от {access.UNLOCK_MIN_TOPUP} ₽ — нажми «Проверить пополнение»")
+
+
 def window_label() -> str:
     if WITHDRAW_WINDOW_HOURS == 24:
         return "в сутки"
@@ -343,7 +351,8 @@ def window_label() -> str:
 def recent_withdrawals(db: Session, client: Client, now: datetime):
     """Траты колизов за текущие сутки — заявки на списание И заказы в магазине.
     Тратить можно ОДИН раз в сутки: либо списание, либо магазин. Считается по номеру
-    телефона (с любого аккаунта) и по самому аккаунту. Отменённые заказы не считаются.
+    телефона (с любого аккаунта) и по самому аккаунту. Не считаются только заказы, которые
+    отменил администратор (колизы вернулись); просроченный заказ — это трата.
     Возвращает [(время, сумма, "withdraw" | "shop")] по возрастанию времени."""
     conds = [Withdrawal.tg_id == client.tg_id]
     if client.phone_normalized:
@@ -358,7 +367,7 @@ def recent_withdrawals(db: Session, client: Client, now: datetime):
         oconds.append(ShopOrder.phone_normalized == client.phone_normalized)
     rows += [(t, int(a), "shop") for t, a in db.query(ShopOrder.created_at, ShopOrder.total)
              .filter(or_(*oconds), ShopOrder.created_at >= since,
-                     ShopOrder.status.notin_(["cancelled", "expired"])).all()]
+                     ShopOrder.status != "cancelled").all()]
     return sorted(rows, key=lambda r: r[0])
 
 
@@ -444,6 +453,7 @@ def client_to_dict(db: Session, client: Client) -> dict:
         "next_tier": TIER_LABELS.get(next_tier) if next_tier else None,
         "remaining_to_next_tier": remaining,
         "games": games,
+        "games_lock": access.games_lock(db, client),
         "dice_bonus_per_point": DICE_BONUS_PER_POINT,
         "bet_config": {
             "house_edge_percent": BET_HOUSE_EDGE_PERCENT,
@@ -552,6 +562,7 @@ def api_spin(payload: InitDataPayload, db: Session = Depends(get_db)):
     tg_user = verify(payload.initData)
     client = consented_client(db, tg_user)
     require_verified(client)
+    require_games_unlocked(db, client)
     require_free_attempt(db, client.tg_id, "spin")
 
     prize = spin_roulette()
@@ -569,6 +580,7 @@ def api_dice(payload: InitDataPayload, db: Session = Depends(get_db)):
     tg_user = verify(payload.initData)
     client = consented_client(db, tg_user)
     require_verified(client)
+    require_games_unlocked(db, client)
     require_free_attempt(db, client.tg_id, "dice")
 
     value = random.randint(1, 6)
@@ -587,6 +599,7 @@ def api_probability(payload: ProbabilityPayload, db: Session = Depends(get_db)):
     tg_user = verify(payload.initData)
     client = consented_client(db, tg_user)
     require_verified(client)
+    require_games_unlocked(db, client)
     require_free_attempt(db, client.tg_id, "probability")
 
     chance = max(BET_MIN_CHANCE, min(BET_MAX_CHANCE, payload.threshold))
@@ -1314,15 +1327,27 @@ def api_shop_order_state(payload: OrderIdPayload, db: Session = Depends(get_db))
 
 @app.post("/api/shop/cancel")
 async def api_shop_cancel(payload: OrderIdPayload, db: Session = Depends(get_db)):
+    """Гость сам заказ не отменяет: колизы за покупку не возвращаются. Оставлено для
+    старых версий приложения — отвечаем понятной ошибкой."""
+    consented_client(db, verify(payload.initData))
+    raise HTTPException(status_code=400, detail="Заказ отменить нельзя — колизы за покупку не возвращаются. "
+                                                "Если товара нет в баре, администратор отменит заказ и вернёт колизы.")
+
+
+# ---------- проверка пополнения: открывает бесплатные игры ----------
+
+@app.post("/api/topup/check")
+async def api_topup_check(payload: InitDataPayload, db: Session = Depends(get_db)):
     client = consented_client(db, verify(payload.initData))
-    r = shop.cancel_order(db, payload.order_id, "отменил гость", client_id=client.id)
-    if r is None:
-        raise HTTPException(status_code=400, detail="Этот заказ уже выдан или отменён")
-    o, refunded = r
-    await notify_admins(f"↩️ Гость отменил заказ №{o.id} — не выдавай его.")
-    db.refresh(client)
-    return {"order": shop.order_view(o, client.nickname), "balance": client.balance, "refunded": refunded,
-            "withdraw": withdraw_info(db, client)}
+    require_verified(client)
+    if access.is_locked(db, client):
+        try:
+            access.request_check(db, client)
+        except access.AccessError as e:
+            raise HTTPException(status_code=429, detail=str(e))
+        if _bot_instance is not None:
+            await bot_extra.topup_check_notify(_bot_instance, client, access.UNLOCK_MIN_TOPUP)
+    return {"games_lock": access.games_lock(db, client)}
 
 
 # ---------- отметка «Я в клубе» с чеком ----------
@@ -1505,6 +1530,37 @@ def api_event_img(event_id: int, db: Session = Depends(get_db)):
     if ev is None or not ev.image:
         raise HTTPException(status_code=404, detail="Нет фото")
     return Response(content=ev.image, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=604800"})
+
+
+# ---------- новости клуба с реакциями ----------
+
+class NewsReactPayload(BaseModel):
+    initData: str
+    news_id: int
+    value: int          # 1 — рад(а), -1 — не интересно
+
+
+@app.post("/api/news")
+def api_news(payload: InitDataPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    return {"news": news.news_list(db, client)}
+
+
+@app.post("/api/news/react")
+def api_news_react(payload: NewsReactPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    try:
+        return news.react(db, client, payload.news_id, payload.value)
+    except news.NewsError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/api/news/img/{news_id}")
+def api_news_img(news_id: int, db: Session = Depends(get_db)):
+    n = db.get(ClubNews, news_id)
+    if n is None or not n.image:
+        raise HTTPException(status_code=404, detail="Нет фото")
+    return Response(content=n.image, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=604800"})
 
 
 # ---------- админ ----------
@@ -1695,9 +1751,9 @@ async def expiry_tick():
                              f"в магазине приложения или списать до {WITHDRAW_LIMIT} колизов на карту гостя.".replace(",", " "),
                              cabinet=True)
     for oid, tg_id, total, refunded in expired_info:
-        await bot_extra.tell(_bot_instance, tg_id, f"Заказ №{oid} не забрали вовремя — он отменён. " + (
-            f"{total} колизов вернулись на баланс." if refunded else "Срок действия этих колизов уже истёк — они сгорели."))
-        await notify_admins(f"⌛ Заказ №{oid} просрочен и отменён — не выдавай его.")
+        await bot_extra.tell(_bot_instance, tg_id, f"Заказ №{oid} не забрали вовремя. "
+                             f"{total} колизов за него списаны — по правилам магазина покупка не возвращается.")
+        await notify_admins(f"⌛ Заказ №{oid} не забрали за отведённое время — закрыт, колизы списаны. Не выдавай его.")
 
 
 _weekly_key = None

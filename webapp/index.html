@@ -976,6 +976,46 @@
   .bk-pick-t { font-size: 14px; line-height: 1.35; }
   .bk-pick-t small { display: block; color: var(--muted); font-size: 12px; }
   .bk-pick button { width: auto; background: #222226; color: var(--muted); border: 0; border-radius: 12px; padding: 8px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+
+  /* бесплатные игры: доступ после пополнения */
+  .glock { background: linear-gradient(160deg, #1c1a00, #121212 62%); border: 1px solid #3a3500; border-radius: 24px; padding: 18px 16px 16px; margin-bottom: 14px; }
+  .glock-ic { width: 44px; height: 44px; border-radius: 14px; background: var(--accent); color: #000; display: flex; align-items: center; justify-content: center; margin-bottom: 12px; }
+  .glock-ic svg { width: 24px; height: 24px; }
+  .glock.pending .glock-ic { background: #2a2a2e; color: var(--accent); }
+  .glock-t { font-family: "Unbounded"; font-weight: 700; font-size: 16px; line-height: 1.3; margin-bottom: 6px; }
+  .glock-d { font-size: 13.5px; color: var(--muted); line-height: 1.45; margin-bottom: 14px; }
+  .glock-steps { display: grid; gap: 8px; margin-bottom: 16px; }
+  .glock-steps div { display: flex; align-items: center; gap: 10px; font-size: 13.5px; }
+  .glock-steps b { width: 24px; height: 24px; border-radius: 50%; background: #2a2a2e; color: var(--accent); font-family: "Unbounded"; font-size: 11px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .glock .primary { margin: 0; }
+
+  /* новости клуба */
+  .newsc { background: var(--surface); border-radius: 24px; overflow: hidden; margin: 12px 0; }
+  .newsc img, .nwi img { width: 100%; max-height: 200px; object-fit: cover; display: block; }
+  .nw-body { padding: 14px 16px 16px; }
+  .nw-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+  .nw-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--accent); color: #000; font-weight: 700; font-size: 11.5px; padding: 4px 10px; border-radius: 99px; }
+  .nw-chip i { width: 6px; height: 6px; border-radius: 50%; background: #000; }
+  .nw-date { font-size: 12px; color: var(--muted); }
+  .nw-title { font-family: "Unbounded"; font-weight: 700; font-size: 16px; line-height: 1.3; margin-bottom: 6px; }
+  .nw-text { font-size: 14px; color: #c9cbd2; line-height: 1.45; white-space: pre-line; }
+  .newsc .nw-text { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+  .nw-q { font-size: 13px; color: var(--muted); margin: 14px 0 8px; }
+  .nw-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .nw-btns button { border: 0; border-radius: 16px; padding: 13px 10px; font-family: "Geologica"; font-weight: 700; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 7px; }
+  .nw-btns svg { width: 18px; height: 18px; }
+  .nw-yes { background: var(--accent); color: #000; }
+  .nw-no { background: #222226; color: #d8dae0; }
+  .nw-btns.voted .nw-yes:not(.on), .nw-btns.voted .nw-no:not(.on) { opacity: .45; }
+  .nw-btns .on.nw-no { background: #34343a; color: #fff; }
+  .nw-res { margin-top: 12px; }
+  .nw-bar { height: 8px; border-radius: 99px; background: #2a2a2e; overflow: hidden; display: flex; }
+  .nw-bar i { display: block; height: 100%; background: var(--accent); transition: width .5s ease; }
+  .nw-res-l { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .nw-res-l b { color: var(--text); }
+  .nw-more { display: block; width: 100%; background: none; border: 0; color: var(--muted); font-size: 13px; padding: 12px 0 0; cursor: pointer; font-family: "Geologica"; }
+  .nwi { background: var(--surface); border-radius: 24px; overflow: hidden; margin-bottom: 12px; }
+  .newsc.thanks .nw-btns { display: none; }
   .badges { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
   .badge2 { background: var(--surface); border-radius: 16px; padding: 12px 14px; font-size: 13.5px; font-weight: 600; color: var(--muted-2); display: flex; align-items: center; gap: 8px; }
   .badge2 i { width: 10px; height: 10px; border-radius: 50%; background: var(--surface-2); flex-shrink: 0; }
@@ -1050,6 +1090,8 @@
     <div class="hint" id="nick-hint">3–16 символов: буквы, цифры, пробел, точка, дефис, подчёркивание</div>
   </div>
 
+  <div class="newsc hidden" id="news-card"></div>
+
   <div class="grid">
     <button class="tile big hot" onclick="showPanel('activities')">
       <div><div class="tile-title">Игры</div><div class="tile-sub" id="quick-games-sub">Рулетка, кости, дайс</div></div>
@@ -1096,9 +1138,18 @@
 
   <div class="links">
     <button onclick="showPanel('profile')">Профиль и уровни<svg><use href="#i-chev"/></svg></button>
+    <button onclick="showPanel('news')">Новости клуба<svg><use href="#i-chev"/></svg></button>
     <button onclick="showPanel('promotions')">Все акции клуба<svg><use href="#i-chev"/></svg></button>
     <button onclick="openPolicy()">Политика обработки данных<svg><use href="#i-chev"/></svg></button>
   </div>
+</div>
+
+<!-- ================= НОВОСТИ ================= -->
+<div class="panel" id="panel-news">
+  <div class="bar"><button class="back" data-back><svg><use href="#i-back"/></svg></button><div class="pill"><i></i><span class="bal-val">0</span></div></div>
+  <div class="title">Новости</div>
+  <div class="lead">Что меняется в клубе. Отметь, нравится ли — мы смотрим на каждую реакцию</div>
+  <div id="news-list"><div class="empty-state">Загружаем…</div></div>
 </div>
 
 <!-- ================= ПРОФИЛЬ ================= -->
@@ -1186,6 +1237,17 @@
   <div class="bar"><button class="back" data-back><svg><use href="#i-back"/></svg></button><div class="pill"><i></i><span class="bal-val" id="games-balance">0</span></div></div>
   <div class="title">Игры</div>
   <div class="lead">Бесплатные — раз в сутки. Остальные на колизы.</div>
+  <div class="glock hidden" id="games-lock">
+    <div class="glock-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="3"/><path d="M8 10.5V7.5a4 4 0 018 0v3"/><circle cx="12" cy="15.5" r="1.3" fill="currentColor" stroke="none"/></svg></div>
+    <div class="glock-t" id="glock-title">Бесплатные игры — после пополнения</div>
+    <div class="glock-d" id="glock-text"></div>
+    <div class="glock-steps" id="glock-steps">
+      <div><b>1</b>Пополни счёт на стойке клуба</div>
+      <div><b>2</b>Нажми «Проверить пополнение»</div>
+      <div><b>3</b>Администратор сверит с CRM — и игры откроются</div>
+    </div>
+    <button class="primary" id="topup-check">Проверить пополнение</button>
+  </div>
 
   <div class="grow" data-play="g-roulette">
     <div class="grow-art"><svg width="42" height="42" viewBox="0 0 42 42"><circle cx="21" cy="21" r="17" fill="#f5e92e"/><path d="M21 4v34M4 21h34M9 9l24 24M33 9L9 33" stroke="#000" stroke-width="2"/><circle cx="21" cy="21" r="5" fill="#000"/></svg></div>
@@ -1627,8 +1689,7 @@
   <div class="os-status" id="os-status">Покажи этот экран администратору</div>
   <div class="card" id="os-items" style="padding:6px 14px"></div>
   <div class="ctotal"><span style="color:var(--muted)">Оплачено колизами</span><b id="os-total">0</b></div>
-  <div class="hint" id="os-hint">Экран «живой»: идут часы и бежит полоса — так администратор видит, что это настоящий заказ, а не скриншот. Забери заказ до конца отсчёта, после выдачи статус сменится сам.</div>
-  <button class="link-danger hidden" id="os-cancel" style="margin-top:18px;display:block">Отменить заказ и вернуть колизы</button>
+  <div class="hint" id="os-hint">Экран «живой»: идут часы и бежит полоса — так администратор видит, что это настоящий заказ, а не скриншот. Забери заказ до конца отсчёта, после выдачи статус сменится сам. Покупка не возвращается: если не забрать вовремя, колизы спишутся.</div>
 </div>
 
 <div id="toast" class="toast hidden"></div>
@@ -1699,6 +1760,7 @@ function showPanel(name, isBack) {
   if (name === "booking" && typeof bookingOnPanel === "function") bookingOnPanel();
   if (name === "team" && typeof loadTeam === "function") loadTeam();
   if (name === "events" && typeof loadEvents === "function") loadEvents();
+  if (name === "news" && typeof loadNews === "function") loadNews();
   if (name === "profile" && typeof renderProfile === "function") renderProfile();
   if (name === "visits" && typeof renderVisits === "function") renderVisits();
 }
@@ -1776,6 +1838,67 @@ function renderBalance() {
   updatePayout();
   if (typeof refreshBetButtons === "function" && me) refreshBetButtons();
 }
+let glockPoll = 0;
+function renderGamesLock() {
+  const L = me && me.games_lock, box = $("games-lock");
+  const show = !!(L && L.locked && me.phone_verified);
+  box.classList.toggle("hidden", !show);
+  if (!show) {
+    clearInterval(glockPoll);
+    glockPoll = 0;
+    return;
+  }
+  const btn = $("topup-check"), sum = fmt(L.min_topup);
+  box.classList.toggle("pending", L.state === "pending");
+  $("glock-steps").classList.toggle("hidden", L.state === "pending" || !!L.by_admin);
+  btn.classList.toggle("hidden", !!L.by_admin);
+  if (L.by_admin) {
+    $("glock-title").textContent = "Бесплатные игры закрыты";
+    $("glock-text").textContent = "Доступ закрыл администратор — уточни на стойке клуба. Игры на колизы, магазин и батлы работают.";
+  } else if (L.state === "pending") {
+    $("glock-title").textContent = "Проверяем пополнение";
+    $("glock-text").textContent = "Заявка у администратора — обычно это пара минут. Как только подтвердит, игры откроются здесь, а бот пришлёт сообщение.";
+    btn.disabled = !!L.retry_in;
+    btn.textContent = L.retry_in ? "Напомнить можно через ".concat(L.retry_in) : "Напомнить администратору";
+  } else if (L.state === "declined") {
+    $("glock-title").textContent = "Пополнение не нашли";
+    $("glock-text").textContent = "Администратор не увидел пополнения от ".concat(sum, " ₽ на твоём номере. Пополни счёт на стойке и отправь проверку ещё раз.");
+    btn.disabled = !!L.retry_in;
+    btn.textContent = L.retry_in ? "Повторить через ".concat(L.retry_in) : "Проверить пополнение";
+  } else {
+    $("glock-title").textContent = "Бесплатные игры — после пополнения";
+    $("glock-text").textContent = "Рулетка, кости и дайс бесплатно каждый день — для гостей, которые пополняли счёт в клубе от ".concat(sum, " ₽. Игры на колизы доступны и так.");
+    btn.disabled = false;
+    btn.textContent = "Проверить пополнение";
+  }
+  if (L.state === "pending" && !glockPoll) {
+    glockPoll = setInterval(() => {
+      loadMe().catch(() => {
+      });
+    }, 15e3);
+  } else if (L.state !== "pending" && glockPoll) {
+    clearInterval(glockPoll);
+    glockPoll = 0;
+  }
+}
+$("topup-check").addEventListener("click", async () => {
+  const btn = $("topup-check");
+  btn.disabled = true;
+  try {
+    const r = await api("/api/topup/check", { initData });
+    me.games_lock = r.games_lock;
+    if (!r.games_lock.locked) {
+      showToast("Бесплатные игры открыты!");
+      haptic("win");
+      loadMe().catch(() => {
+      });
+    } else showToast("Отправили администратору — он сверит пополнение с CRM");
+    renderGames();
+  } catch (e) {
+    showToast(e.message);
+    btn.disabled = false;
+  }
+});
 function gameHint(g, word) {
   if (g.left > 0) return "Бесплатных ".concat(word, " сегодня: ").concat(g.left, " из ").concat(g.total);
   return g.next_free_in ? "Следующая бесплатная попытка через ".concat(g.next_free_in) : "Бесплатные попытки закончились";
@@ -1810,6 +1933,19 @@ function renderGames() {
     return;
   }
   $("bet-toggle").disabled = false;
+  renderGamesLock();
+  if (me.games_lock && me.games_lock.locked) {
+    const why = "Бесплатные попытки откроются после пополнения в клубе от ".concat(fmt(me.games_lock.min_topup), " ₽");
+    ["row-spin", "row-dice", "row-prob"].forEach((id) => {
+      $(id).className = "wait";
+      $(id).innerHTML = "после<br>пополнения";
+    });
+    ["spin-button", "dice-button", "prob-button"].forEach((id) => $(id).disabled = true);
+    ["spin-hint", "dice-hint", "prob-hint"].forEach((id) => $(id).textContent = why);
+    $("prob-button").textContent = "Бесплатно";
+    $("quick-games-sub").textContent = "Откроются после пополнения";
+    return;
+  }
   $("spin-button").disabled = g.spin.left <= 0;
   $("spin-hint").textContent = gameHint(g.spin, "прокрутов");
   $("dice-button").disabled = g.dice.left <= 0;
@@ -3536,6 +3672,10 @@ $("sheet").addEventListener("click", async (e) => {
     if (pay && !pay.disabled) payCart(pay);
   }
 });
+function ttlText() {
+  const m = shopCat && shopCat.order_ttl_min || 180;
+  return m % 60 ? "".concat(m, " мин") : "".concat(m / 60, " ").concat(plural(m / 60, "часа", "часов", "часов"));
+}
 function confirmTg(text) {
   return new Promise((res) => {
     try {
@@ -3550,7 +3690,7 @@ function confirmTg(text) {
 }
 async function payCart(btn) {
   const total = cartTotal();
-  if (!await confirmTg("Списать ".concat(fmt(total), " колизов и оформить заказ?"))) return;
+  if (!await confirmTg("Списать ".concat(fmt(total), " колизов и оформить заказ? Отменить его будет нельзя — забери заказ в течение ").concat(ttlText(), ", иначе колизы спишутся."))) return;
   btn.disabled = true;
   try {
     const items = cartLines().map((l) => ({ product: l.p.id, variant: l.v.id, qty: l.qty }));
@@ -3638,14 +3778,13 @@ function renderOrderScreen() {
   $("os-cap").textContent = o.status === "new" ? "Заказ · покажи администратору" : { issued: "Заказ выдан", expired: "Заказ просрочен" }[o.status] || "Заказ отменён";
   const st = $("os-status");
   st.className = "os-status " + o.status;
-  st.textContent = o.status === "new" ? "Ждёт выдачи — покажи экран администратору" : o.status === "issued" ? "Выдано в ".concat(mskTime(o.issued_at), " — приятного!") : o.status === "expired" ? "Заказ не забрали вовремя — он отменён" : "Заказ отменён";
+  st.textContent = o.status === "new" ? "Ждёт выдачи — покажи экран администратору" : o.status === "issued" ? "Выдано в ".concat(mskTime(o.issued_at), " — приятного!") : o.status === "expired" ? "Заказ не забрали вовремя — колизы списаны" : "Заказ отменён администратором — колизы вернулись";
   setHTML($("os-items"), o.items.map((it) => {
     const p = prod(it.product);
     const v = p ? variant(p, it.variant) : null;
     return '<div class="cline">'.concat(v ? '<img src="'.concat(v.img, '" alt="">') : "<div></div>", '<div><div class="cn">').concat(escapeHtml(it.name), "</div>").concat(it.label ? '<div class="cv">'.concat(escapeHtml(it.label), "</div>") : "", '</div><div class="total-badge">× ').concat(it.qty, "</div></div>");
   }).join(""));
   $("os-total").innerHTML = fmt(o.total) + '<i class="coin"></i>';
-  $("os-cancel").classList.toggle("hidden", o.status !== "new");
 }
 function openOrderScreen(o) {
   osOrder = o;
@@ -3689,21 +3828,6 @@ function closeOrderScreen() {
   document.body.style.overflow = "";
 }
 $("os-close").addEventListener("click", closeOrderScreen);
-$("os-cancel").addEventListener("click", async () => {
-  if (!osOrder || !await confirmTg("Отменить заказ и вернуть колизы на баланс?")) return;
-  try {
-    const r = await api("/api/shop/cancel", { initData, order_id: osOrder.id });
-    osOrder = r.order;
-    me.balance = r.balance;
-    me.withdraw = r.withdraw;
-    renderOrderScreen();
-    renderBalance();
-    loadOrders();
-    showToast(r.refunded ? "Заказ отменён — колизы вернулись" : "Заказ отменён. Срок колизов уже истёк — они сгорели");
-  } catch (e) {
-    showToast(e.message);
-  }
-});
 let rtTab = "volume";
 $("rt-tabs").addEventListener("click", (e) => {
   const b = e.target.closest("[data-tab]");
@@ -3922,6 +4046,76 @@ $("tm-list").addEventListener("click", async (e) => {
     showToast(err.message);
   }
   loadTeam();
+});
+const NW_UP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10.5V20H4.5a1 1 0 01-1-1v-7.5a1 1 0 011-1zM7 10.5l4-7.5a2.5 2.5 0 012.5 2.5V9h5.2a2 2 0 012 2.3l-1.2 7A2 2 0 0117.5 20H7"/></svg>';
+const NW_DOWN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 14.5h7"/><circle cx="9" cy="10" r=".8" fill="currentColor"/><circle cx="15" cy="10" r=".8" fill="currentColor"/></svg>';
+let newsItems = [];
+function nwResult(x) {
+  const t = x.likes + x.dislikes;
+  if (!t) return "";
+  const p = Math.round(x.likes * 100 / t);
+  return '<div class="nw-res"><div class="nw-bar"><i style="width:'.concat(p, '%"></i></div>\n    <div class="nw-res-l"><span><b>').concat(p, "%</b> рады</span><span>").concat(t, " ").concat(plural(t, "голос", "голоса", "голосов"), "</span></div></div>");
+}
+function nwButtons(x) {
+  return '<div class="nw-btns'.concat(x.mine ? " voted" : "", '"><button class="nw-yes').concat(x.mine > 0 ? " on" : "", '" data-nw="').concat(x.id, '" data-v="1">').concat(NW_UP, 'Круто, жду</button>\n    <button class="nw-no').concat(x.mine < 0 ? " on" : "", '" data-nw="').concat(x.id, '" data-v="-1">').concat(NW_DOWN, "Не интересно</button></div>");
+}
+function nwCard(x, home) {
+  return "".concat(x.img ? '<img src="'.concat(x.img, '" alt="">') : "", '<div class="nw-body">\n    <div class="nw-top">').concat(home ? '<span class="nw-chip"><i></i>Новое в клубе</span>' : "<span></span>", '<span class="nw-date">').concat(escapeHtml(x.date), '</span></div>\n    <div class="nw-title">').concat(escapeHtml(x.title), "</div>").concat(x.body ? '<div class="nw-text">'.concat(escapeHtml(x.body), "</div>") : "", "\n    ").concat(x.mine ? "" : '<div class="nw-q">Как тебе такое нововведение?</div>').concat(nwButtons(x)).concat(x.mine ? nwResult(x) : "", "\n    ").concat(home ? '<button class="nw-more" data-nw-all>Все новости ›</button>' : "", "</div>");
+}
+function renderNewsHome() {
+  const box = $("news-card");
+  const x = newsItems.find((n) => !n.mine);
+  box.classList.remove("thanks");
+  if (!x) {
+    box.classList.add("hidden");
+    return;
+  }
+  box.dataset.id = x.id;
+  setHTML(box, nwCard(x, true));
+  box.classList.remove("hidden");
+}
+function renderNewsList() {
+  setHTML($("news-list"), newsItems.length ? newsItems.map((x) => '<div class="nwi" id="nwi-'.concat(x.id, '">').concat(nwCard(x, false), "</div>")).join("") : '<div class="card"><div class="empty-state">Новостей пока нет — скоро расскажем, что нового в клубе.</div></div>');
+}
+async function loadNews() {
+  try {
+    newsItems = (await api("/api/news", { initData })).news;
+  } catch (e) {
+    return;
+  }
+  renderNewsHome();
+  renderNewsList();
+  const it = +(new URLSearchParams(location.search).get("item") || 0);
+  if (it && $("nwi-" + it) && $("panel-news").classList.contains("active")) $("nwi-" + it).scrollIntoView({ block: "start" });
+}
+async function newsReact(b) {
+  const id = +b.dataset.nw, v = +b.dataset.v;
+  const x = newsItems.find((n) => n.id === id);
+  if (!x) return;
+  const fromHome = !!b.closest("#news-card");
+  try {
+    const r = await api("/api/news/react", { initData, news_id: id, value: v });
+    Object.assign(x, r);
+    haptic(v > 0 ? "win" : "light");
+    renderNewsList();
+    if (fromHome) {
+      const box = $("news-card");
+      setHTML(box, nwCard(x, true));
+      box.classList.add("thanks");
+      showToast(v > 0 ? "Спасибо! Рады, что тебе нравится" : "Спасибо, учтём");
+      setTimeout(renderNewsHome, 2600);
+    }
+  } catch (e) {
+    showToast(e.message);
+  }
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-nw]");
+  if (b) {
+    newsReact(b);
+    return;
+  }
+  if (e.target.closest("[data-nw-all]")) showPanel("news");
 });
 const EV_ICONS = {
   football: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5l3.8 2.8-1.4 4.5H9.6l-1.4-4.5z"/><path d="M12 3v4.5M15.8 10.3l4.6-1.5M14.4 14.8l2.8 3.9M9.6 14.8l-2.8 3.9M8.2 10.3L3.6 8.8"/>',
@@ -4232,11 +4426,12 @@ Promise.all([loadTiers(), loadMe()]).then(() => {
   if (battleParam && me) {
     bt.id = battleParam;
     showPanel("battle");
-  } else if (me && ["shop", "rating", "activities", "booking", "battle", "profile", "team", "events", "visits"].indexOf(qs.get("panel")) >= 0) {
+  } else if (me && ["shop", "rating", "activities", "booking", "battle", "profile", "team", "events", "visits", "news"].indexOf(qs.get("panel")) >= 0) {
     if (qs.get("panel") === "team" && qs.get("item")) tm.focus = +qs.get("item");
     showPanel(qs.get("panel"));
   }
   if (me) loadEvents();
+  if (me) loadNews();
   if (me && me.shop_active_orders) loadOrders();
   if (me && me.phone_verified) {
     api("/api/battle/list", { initData }).then((d) => {

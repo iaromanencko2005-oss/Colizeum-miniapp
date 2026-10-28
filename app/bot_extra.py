@@ -17,8 +17,8 @@ from aiogram.types import (
 )
 
 from .database import SessionLocal
-from .models import Client, ShopOrder, CheckIn
-from . import shop, checkin, group, referrals
+from .models import Client, ShopOrder, CheckIn, normalize_phone
+from . import shop, checkin, group, referrals, access
 from .bot import is_admin, ADMIN_IDS, WEBAPP_URL, webapp_url
 
 logger = logging.getLogger("colizeum")
@@ -346,6 +346,90 @@ async def guest_photo(message: Message):
         db.close()
     await message.answer(f"🧾 Чек получил и отправил администратору (отметка №{cid}). "
                          f"Как только подтвердит — придут +{checkin.CHECKIN_BONUS} колизов.")
+
+
+# ---------- проверка пополнения (открывает бесплатные игры) ----------
+
+def topup_markup(cid: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Пополнение есть", callback_data=f"tp:ok:{cid}"),
+        InlineKeyboardButton(text="❌ Не нашёл", callback_data=f"tp:no:{cid}"),
+    ]])
+
+
+async def topup_check_notify(bot: Bot, client: Client, min_topup: int):
+    tg = f"@{client.tg_username}" if client.tg_username else f"id {client.tg_id}"
+    text = (f"💳 Проверка пополнения\n"
+            f"Гость: {guest_line(client)}\n"
+            f"Telegram: {tg}\n"
+            f"В выгрузке CRM номер не найден.\n\n"
+            f"Проверь в CRM, пополнил ли гость счёт от {fmt(min_topup)} ₽. "
+            f"Подтвердишь — гостю откроются бесплатные игры в приложении.")
+    await send_staff(bot, text, topup_markup(client.id))
+
+
+@router.callback_query(F.data.startswith("tp:"))
+async def cb_topup(callback: CallbackQuery):
+    if not can_manage(callback):
+        await callback.answer("Это кнопка для администратора", show_alert=True)
+        return
+    _, act, raw = (callback.data.split(":") + ["", ""])[:3]
+    if not raw.isdigit():
+        await callback.answer()
+        return
+    db = SessionLocal()
+    try:
+        c = access.decide(db, int(raw), act == "ok")
+        if c is None:
+            await callback.answer("По этой заявке уже приняли решение", show_alert=True)
+            return
+        c_tg, c_ok = c.tg_id, c.topup_check_state == "approved"
+    finally:
+        db.close()
+    await callback.answer("Готово")
+    base = (callback.message.text or "").split("\n\nПроверь в CRM")[0]
+    if c_ok:
+        await _edit(callback, base + f"\n\n✅ Пополнение подтверждено — {who(callback.from_user)}")
+        await tell(callback.bot, c_tg, "✅ Пополнение подтверждено! Бесплатные игры в кабинете COLIZEUM открыты — "
+                                        "рулетка, кости и дайс каждый день.", cabinet=True)
+    else:
+        await _edit(callback, base + f"\n\n❌ Не подтверждено — {who(callback.from_user)}")
+        await tell(callback.bot, c_tg, f"Администратор не нашёл пополнение от {fmt(access.UNLOCK_MIN_TOPUP)} ₽ на твоём номере. "
+                                        "Пополни счёт на стойке клуба и нажми «Проверить пополнение» в разделе «Игры» ещё раз.")
+
+
+async def _set_games_access(message: Message, command: CommandObject, on: bool):
+    if not is_admin(message.from_user.id):
+        return
+    norm = normalize_phone(command.args or "")
+    if len(norm) < 10:
+        await message.answer(f"Формат: /{'unlock' if on else 'lock'} +79991234567")
+        return
+    db = SessionLocal()
+    try:
+        c = db.query(Client).filter(Client.phone_normalized == norm, Client.phone_verified == True).first()  # noqa: E712
+        if c is None:
+            await message.answer("Гость с таким подтверждённым номером не найден")
+            return
+        access.set_unlocked(db, c, on)
+        c_tg = c.tg_id
+    finally:
+        db.close()
+    if on:
+        await message.answer("Бесплатные игры для гостя открыты.")
+        await tell(message.bot, c_tg, "✅ Бесплатные игры в кабинете COLIZEUM открыты!", cabinet=True)
+    else:
+        await message.answer("Бесплатные игры для гостя закрыты (CRM их не откроет, пока не сделаешь /unlock).")
+
+
+@router.message(Command("unlock"))
+async def cmd_unlock(message: Message, command: CommandObject):
+    await _set_games_access(message, command, True)
+
+
+@router.message(Command("lock"))
+async def cmd_lock(message: Message, command: CommandObject):
+    await _set_games_access(message, command, False)
 
 
 @router.message(Command("chatid"))

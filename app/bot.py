@@ -38,7 +38,7 @@ from .models import (
 )
 from .topups import parse_topups
 from .telegram_auth import make_login_token
-from . import referrals
+from . import referrals, access
 
 logger = logging.getLogger("colizeum")
 
@@ -198,7 +198,8 @@ async def cmd_start(message: Message, command: CommandObject):
         return
     _remember_username(message.from_user)
     # Ссылки из группы: заявка тиммейтов, событие афиши — сразу открываем нужный раздел
-    for prefix, panel, title in (("team_", "team", "Открыть заявку"), ("event_", "events", "Открыть афишу")):
+    for prefix, panel, title in (("team_", "team", "Открыть заявку"), ("event_", "events", "Открыть афишу"),
+                                 ("news_", "news", "Открыть новость")):
         if arg.startswith(prefix) and arg[len(prefix):].isdigit():
             await message.answer("Жми, чтобы открыть в приложении:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(text=title, web_app=WebAppInfo(url=webapp_url(
@@ -629,7 +630,8 @@ async def cmd_check(message: Message, command: CommandObject):
             lines.append(
                 f"Аккаунт: {c.tg_name or 'без имени'} (id {c.tg_id}), Telegram-номер {c.phone or '—'} — "
                 f"{'номер подтверждён' if c.phone_verified else 'номер НЕ подтверждён'}, "
-                f"уровень {TIER_LABELS[get_tier(topup)]}, баланс {c.balance or 0}{crm}"
+                f"уровень {TIER_LABELS[get_tier(topup)]}, баланс {c.balance or 0}{crm}, "
+                f"бесплатные игры: {'закрыты' if access.is_locked(db, c) else 'открыты'}"
             )
         await message.answer("\n".join(lines))
     finally:
@@ -1252,6 +1254,9 @@ async def cmd_admin(message: Message):
         "Файл Excel с подписью /import_topups — загрузить пополнения из CRM\n"
         "/set_topup +7… 12000 — вручную задать среднее в месяц\n"
         "/link_crm +7(Telegram) +7(CRM) — если в CRM гость на другом номере\n\n"
+        "Бесплатные игры (только после пополнения)\n"
+        "Заявки «Проверить пополнение» приходят в чат персонала с кнопками\n"
+        "/unlock +7… — открыть вручную, /lock +7… — закрыть\n\n"
         "Колизы\n"
         "/add_bonus +7… 150 — начислить в приложении\n"
         "/spend +7… 150 — списать в приложении\n\n"
@@ -1260,6 +1265,9 @@ async def cmd_admin(message: Message):
         "/shop_off monster, /shop_on monster — скрыть / вернуть товар (или вкус: /shop_off burn гуава)\n"
         "/orders — заказы, которые ещё не выданы\n\n"
 
+        "Новости клуба\n"
+        "Фото с подписью /news Заголовок | Текст — новость с реакциями гостей\n"
+        "/news_list — новости и реакции, публикация в группе и удаление\n\n"
         "Афиша\n"
         "Фото с подписью /event 01.11 20:00 | Название | Описание — новое событие\n"
         "/events — список, публикация в группе и удаление\n\n"

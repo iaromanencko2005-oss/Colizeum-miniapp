@@ -97,6 +97,12 @@ class Client(Base):
     games = Column(Text, nullable=True)            # JSON-список любимых игр
     rank = Column(String, nullable=True)           # «Faceit 8», «Легенда 3» — как сам напишет
     tg_username = Column(String, nullable=True)    # @username в Telegram — для связи тиммейтов
+    # Бесплатные игры — только тем, кто пополнял счёт в клубе: номер найден в CRM
+    # или администратор подтвердил пополнение по заявке «Проверить пополнение».
+    games_unlocked_at = Column(DateTime, nullable=True)
+    games_locked = Column(Boolean, default=False)      # админ закрыл вручную (/lock) — CRM не открывает
+    topup_check_at = Column(DateTime, nullable=True)   # когда гость последний раз просил проверку
+    topup_check_state = Column(String, nullable=True)  # pending | declined | approved
 
 
 def topup_key(client) -> str | None:
@@ -535,4 +541,26 @@ class EventGoing(Base):
     event_id = Column(Integer, primary_key=True)
     client_id = Column(Integer, primary_key=True)
     reminded = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ClubNews(Base):
+    """Новость клуба: изменения и нововведения. Гости ставят реакцию — рады или не интересно."""
+    __tablename__ = "club_news"
+
+    id = Column(Integer, primary_key=True)
+    title = Column(String, nullable=False)
+    body = Column(Text, nullable=True)
+    image = Column(LargeBinary, nullable=True)
+    image_ver = Column(String, nullable=True)
+    status = Column(String, default="active", index=True)     # active | deleted
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class NewsReaction(Base):
+    __tablename__ = "news_reactions"
+
+    news_id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, primary_key=True)
+    value = Column(Integer, nullable=False)                    # 1 — рад(а), -1 — не интересно
     created_at = Column(DateTime, default=datetime.utcnow)

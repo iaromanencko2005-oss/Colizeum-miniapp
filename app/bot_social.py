@@ -18,8 +18,8 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 
 from .database import SessionLocal
-from .models import ClubEvent, TeamPost, Client, EventGoing, normalize_phone
-from . import social, group, referrals
+from .models import ClubEvent, TeamPost, Client, ClubNews, normalize_phone
+from . import social, group, referrals, news
 from .bot import is_admin
 
 logger = logging.getLogger("colizeum")
@@ -214,3 +214,110 @@ async def cmd_profile_reset(message: Message, command: CommandObject):
     finally:
         db.close()
     await message.answer("Описание и ранг гостя очищены.")
+
+
+# ---------- новости клуба с реакциями ----------
+
+def _news_text(n: ClubNews) -> str:
+    return n.title + (f"\n\n{n.body}" if n.body else "")
+
+
+def _news_markup(n: ClubNews) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="Опубликовать в группе", callback_data=f"nw:pub:{n.id}"),
+        InlineKeyboardButton(text="Удалить", callback_data=f"nw:del:{n.id}"),
+    ]])
+
+
+@router.message(Command("news"))
+async def cmd_news(message: Message, command: CommandObject):
+    if not is_admin(message.from_user.id):
+        return
+    try:
+        d = news.parse_news(command.args or "")
+    except news.NewsError as e:
+        await message.answer(str(e) + "\n\nПример (можно фото с подписью):\n/news Новые мониторы 280 Гц | "
+                                      "В зоне Standart поставили новые мониторы ASUS — заходи оценить")
+        return
+    image = None
+    if message.photo:
+        sizes = [p for p in message.photo if p.width <= 1280] or message.photo[:1]
+        buf = BytesIO()
+        await message.bot.download(sizes[-1], destination=buf)
+        image = buf.getvalue()
+    db = SessionLocal()
+    try:
+        n = ClubNews(title=d["title"], body=d["body"], image=image,
+                     image_ver=hashlib.md5(image).hexdigest()[:8] if image else None, status="active")
+        db.add(n)
+        db.commit()
+        db.refresh(n)
+        await message.answer("Новость появилась на главной приложения — гости отметят, рады ли они:\n\n"
+                             + _news_text(n) + "\n\nИтоги реакций — /news_list", reply_markup=_news_markup(n))
+    finally:
+        db.close()
+
+
+@router.message(Command("news_list"))
+async def cmd_news_list(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+    db = SessionLocal()
+    try:
+        items = news.news_list(db, None, limit=10)
+        if not items:
+            await message.answer("Новостей пока нет. Добавить: /news Заголовок | Текст")
+            return
+        for it in items:
+            n = db.get(ClubNews, it["id"])
+            await message.answer(f"#{n.id} · {it['date']} · {n.title}\n{news.summary_line(it['likes'], it['dislikes'])}",
+                                 reply_markup=_news_markup(n))
+    finally:
+        db.close()
+
+
+@router.callback_query(F.data.startswith("nw:"))
+async def cb_news(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Только для администратора", show_alert=True)
+        return
+    _, act, raw = (callback.data.split(":") + ["", ""])[:3]
+    if not raw.isdigit():
+        await callback.answer()
+        return
+    db = SessionLocal()
+    try:
+        n = db.get(ClubNews, int(raw))
+        if n is None or n.status != "active":
+            await callback.answer("Новость уже удалена", show_alert=True)
+            return
+        if act == "del":
+            n.status = "deleted"
+            db.commit()
+            await callback.answer("Удалено")
+            try:
+                await callback.message.edit_reply_markup(reply_markup=None)
+                await callback.message.answer(f"Новость «{n.title}» убрана из приложения.")
+            except Exception:  # noqa: BLE001
+                pass
+            return
+        if act == "pub":
+            if not group.CLUB_GROUP_ID:
+                await callback.answer("Не задана группа клуба (CLUB_GROUP_ID в Railway)", show_alert=True)
+                return
+            link = _deeplink(f"news_{n.id}")
+            markup = (InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Оценить в приложении", url=link)]])
+                      if link else None)
+            text = _news_text(n) + "\n\nКак тебе? Отметь в приложении — нам важно твоё мнение."
+            for chat_id in group.CLUB_GROUP_ID:
+                try:
+                    if n.image:
+                        await callback.bot.send_photo(chat_id, BufferedInputFile(n.image, "news.jpg"),
+                                                      caption=text[:1024], reply_markup=markup)
+                    else:
+                        await callback.bot.send_message(chat_id, text, reply_markup=markup)
+                except Exception as ex:  # noqa: BLE001
+                    logger.warning("Новость: не отправлено в %s: %s", chat_id, ex)
+            await callback.answer("Опубликовано")
+    finally:
+        db.close()
