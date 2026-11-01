@@ -19,8 +19,8 @@ from aiogram.types import (
 from .database import SessionLocal
 import json
 
-from .models import Client, ShopOrder, CheckIn, TierBonus, HookahOrder, HookahCall, WithdrawReceipt, normalize_phone
-from . import shop, checkin, group, referrals, access, tier_bonus, hookah, big_balance
+from .models import Client, ShopOrder, CheckIn, TierBonus, HookahOrder, HookahCall, WithdrawReceipt, CashbackClaim, TIER_LABELS, normalize_phone
+from . import shop, checkin, group, referrals, access, tier_bonus, hookah, big_balance, cashback
 from .bot import is_admin, ADMIN_IDS, WEBAPP_URL, webapp_url
 
 logger = logging.getLogger("colizeum")
@@ -676,6 +676,112 @@ async def cb_receipt(callback: CallbackQuery):
     await tell(callback.bot, r_tg, "✅ Чек подтверждён — списание колизов открыто. Отправь заявку в кабинете." if ok
                else "Чек о пополнении не подтвердили. Пришли фото свежего чека из COLIZEUM — или сыграй на сумму баланса.",
                cabinet=True)
+
+
+# ---------- кэшбэк за пополнение ----------
+
+def cashback_markup(c: CashbackClaim) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=f"✅ Начислить {fmt(c.cashback)}" if c.cashback else "✅ Пополнение есть", callback_data=f"cs:ok:{c.id}"),
+        InlineKeyboardButton(text="❌ Отклонить", callback_data=f"cs:no:{c.id}"),
+    ]])
+
+
+def _cashback_text(c: CashbackClaim, client: Client) -> str:
+    tg = f"@{client.tg_username}" if client.tg_username else f"id {client.tg_id}"
+    return (f"💳 Кэшбэк за пополнение №{c.id}\n"
+            f"Гость: {guest_line(client)}, {tg}\n"
+            f"Статус: {TIER_LABELS.get(c.tier, c.tier)} — кэшбэк {c.percent}%\n\n"
+            f"Пополнение: {fmt(c.amount)} ₽ на номер {c.phone}\n"
+            f"К начислению: {fmt(c.cashback)} колизов\n\n"
+            f"Проверь пополнение в CRM. Если сумма другая — /cashback {c.id} <сумма в CRM>")
+
+
+async def cashback_notify(bot: Bot, c: CashbackClaim, client: Client, photo: bytes) -> str | None:
+    return await send_staff(bot, _cashback_text(c, client), cashback_markup(c), photo=photo)
+
+
+async def _cashback_done(bot: Bot, c: CashbackClaim):
+    if c.status == "approved" and c.cashback > 0:
+        await tell(bot, c.tg_id, f"💳 Кэшбэк начислен: +{fmt(c.cashback)} колизов за пополнение на {fmt(c.amount)} ₽ ({c.percent}%). "
+                                 "Бесплатные игры и списание открыты.", cabinet=True)
+    elif c.status == "approved":
+        await tell(bot, c.tg_id, f"✅ Пополнение на {fmt(c.amount)} ₽ подтверждено — бесплатные игры открыты. "
+                                 "Кэшбэк колизами начисляется гостям со статусом Silver, Gold и Premium.", cabinet=True)
+    else:
+        await tell(bot, c.tg_id, "Кэшбэк по чеку не начислен: администратор не нашёл это пополнение в системе клуба. "
+                                 "Проверь номер и сумму и отправь чек ещё раз.", cabinet=True)
+
+
+@router.callback_query(F.data.startswith("cs:"))
+async def cb_cashback(callback: CallbackQuery):
+    if not can_manage(callback):
+        await callback.answer("Это кнопка для администратора", show_alert=True)
+        return
+    _, act, raw = (callback.data.split(":") + ["", ""])[:3]
+    if not raw.isdigit():
+        await callback.answer()
+        return
+    db = SessionLocal()
+    try:
+        c = cashback.decide(db, int(raw), act == "ok", who(callback.from_user))
+        if c is None:
+            await callback.answer("По этому чеку уже приняли решение", show_alert=True)
+            return
+        db.expunge(c)
+    finally:
+        db.close()
+    await callback.answer("Готово")
+    base = (callback.message.caption or callback.message.text or "").split("\n\nПроверь пополнение")[0]
+    await _edit(callback, base + (f"\n\n✅ Подтверждено, начислено {fmt(c.cashback)} — {who(callback.from_user)}" if c.status == "approved"
+                                  else f"\n\n❌ Отклонено — {who(callback.from_user)}"))
+    await _cashback_done(callback.bot, c)
+
+
+@router.message(Command("cashback"))
+async def cmd_cashback(message: Message, command: CommandObject):
+    """/cashback 12 1500 — начислить по чеку №12, если в CRM другая сумма пополнения."""
+    if not is_admin(message.from_user.id):
+        return
+    parts = (command.args or "").replace("₽", "").split()
+    if len(parts) != 2 or not parts[0].lstrip("#").isdigit() or not parts[1].isdigit():
+        await message.answer("Формат: /cashback 12 1500 — номер чека и сумма пополнения в CRM")
+        return
+    db = SessionLocal()
+    try:
+        c = cashback.decide(db, int(parts[0].lstrip("#")), True, who(message.from_user), amount=int(parts[1]))
+        if c is None:
+            await message.answer("Чек не найден или по нему уже приняли решение")
+            return
+        db.expunge(c)
+    finally:
+        db.close()
+    await message.answer(f"Чек №{c.id}: пополнение {fmt(c.amount)} ₽ → начислено {fmt(c.cashback)} колизов ({c.percent}%).")
+    await _cashback_done(message.bot, c)
+
+
+@router.message(Command("cashbacks"))
+async def cmd_cashbacks(message: Message):
+    """Чеки, которые ждут решения."""
+    if not is_admin(message.from_user.id):
+        return
+    db = SessionLocal()
+    try:
+        rows = db.query(CashbackClaim).filter(CashbackClaim.status == "pending").order_by(CashbackClaim.id).limit(15).all()
+        if not rows:
+            await message.answer("Все чеки на кэшбэк проверены.")
+            return
+        for c in rows:
+            cl = db.get(Client, c.client_id)
+            if cl is None:
+                continue
+            markup = cashback_markup(c)
+            if c.photo_file_id:
+                await message.answer_photo(c.photo_file_id, caption=_cashback_text(c, cl), reply_markup=markup)
+            else:
+                await message.answer(_cashback_text(c, cl), reply_markup=markup)
+    finally:
+        db.close()
 
 
 @router.message(Command("chatid"))

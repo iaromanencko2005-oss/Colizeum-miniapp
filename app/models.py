@@ -636,3 +636,22 @@ class WithdrawReceipt(Base):
     decided_by = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     decided_at = Column(DateTime, nullable=True)
+
+
+class CashbackClaim(Base):
+    """Кэшбэк за пополнение: гость присылает чек, админ сверяет с CRM и начисляет колизы по статусу."""
+    __tablename__ = "cashback_claims"
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, index=True, nullable=False)
+    tg_id = Column(BigInteger, index=True, nullable=False)
+    phone = Column(String, nullable=True)             # номер, на который пополнял (как написал гость)
+    amount = Column(Integer, nullable=False)          # сумма пополнения, ₽
+    tier = Column(String, nullable=True)
+    percent = Column(Integer, default=0)
+    cashback = Column(Integer, default=0)             # колизов к начислению
+    status = Column(String, default="pending", index=True)   # pending | approved | rejected
+    photo_file_id = Column(String, nullable=True)
+    decided_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    decided_at = Column(DateTime, nullable=True)

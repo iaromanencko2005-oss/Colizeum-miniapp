@@ -38,7 +38,7 @@ from .models import (
 from . import referrals
 from .prizes import spin as spin_roulette
 from .games import (
-    FREE_WINDOW, free_attempts_state, format_wait,
+    FREE_WINDOW, free_attempts_state, format_wait, DICE_FREE_BONUS,
     free_probability_reward, roll_free_probability,
     bet_payout, roll_bet,
 )
@@ -51,7 +51,7 @@ from . import battles
 from . import rating
 from . import shop, checkin, group, bonus_expiry, social
 from .models import TeamPost, ClubEvent, EventGoing
-from . import bot_extra, bot_social, access, news, tier_bonus, hookah, big_balance
+from . import bot_extra, bot_social, access, news, tier_bonus, hookah, big_balance, cashback
 from .models import ClubNews
 
 logging.basicConfig(level=logging.INFO)
@@ -462,6 +462,7 @@ def client_to_dict(db: Session, client: Client) -> dict:
         "games": games,
         "games_lock": access.games_lock(db, client),
         "tier_bonus": tier_bonus.info(db, client),
+        "cashback": {k: v for k, v in cashback.info(db, client).items() if k in ("percent", "tier_label", "pending", "total")},
         "dice_bonus_per_point": DICE_BONUS_PER_POINT,
         "bet_config": {
             "house_edge_percent": BET_HOUSE_EDGE_PERCENT,
@@ -592,7 +593,7 @@ def api_dice(payload: InitDataPayload, db: Session = Depends(get_db)):
     require_free_attempt(db, client.tg_id, "dice")
 
     value = random.randint(1, 6)
-    bonus = value * DICE_BONUS_PER_POINT
+    bonus = DICE_FREE_BONUS[value]
     change_balance(db, client, bonus)
     db.add(GamePlay(tg_id=client.tg_id, game="dice", mode="free", payout=bonus))
     db.commit()
@@ -1573,6 +1574,52 @@ async def api_withdraw_receipt(payload: CheckInPayload, db: Session = Depends(ge
     r.photo_file_id = file_id
     db.commit()
     return {"withdraw": withdraw_info(db, client)}
+
+
+# ---------- кэшбэк за пополнение ----------
+
+class CashbackPayload(BaseModel):
+    initData: str
+    photo: str
+    phone: str
+    amount: int
+
+
+@app.post("/api/cashback")
+def api_cashback(payload: InitDataPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    return cashback.info(db, client)
+
+
+@app.post("/api/cashback/submit")
+async def api_cashback_submit(payload: CashbackPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    try:
+        phone, amount = cashback.check_submit(db, client, payload.phone, payload.amount)
+    except cashback.CashbackError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    raw = payload.photo.split(",", 1)[-1]
+    try:
+        photo = base64.b64decode(raw, validate=False)
+    except (ValueError, binascii.Error):
+        raise HTTPException(status_code=400, detail="Не получилось прочитать фото — попробуй другое")
+    if len(photo) < 2000 or len(photo) > 6_000_000:
+        raise HTTPException(status_code=400, detail="Фото не подошло — сфотографируй чек ещё раз")
+    if _bot_instance is None:
+        raise HTTPException(status_code=503, detail="Сейчас не получается отправить чек — попробуй позже")
+    c = cashback.create(db, client, phone, amount)
+    try:
+        file_id = await bot_extra.cashback_notify(_bot_instance, c, client, photo)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Чек кэшбэка не отправлен: %s", e)
+        file_id = None
+    if not file_id:
+        db.delete(c)
+        db.commit()
+        raise HTTPException(status_code=503, detail="Не получилось отправить чек администратору — попробуй ещё раз")
+    c.photo_file_id = file_id
+    db.commit()
+    return cashback.info(db, client)
 
 
 # ---------- ежемесячный бонус уровня ----------

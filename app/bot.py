@@ -199,7 +199,8 @@ async def cmd_start(message: Message, command: CommandObject):
     _remember_username(message.from_user)
     # Ссылки из группы: заявка тиммейтов, событие афиши — сразу открываем нужный раздел
     for prefix, panel, title in (("team_", "team", "Открыть заявку"), ("event_", "events", "Открыть афишу"),
-                                 ("news_", "news", "Открыть новость"), ("smoke_", "smoke", "Открыть «Дымок»")):
+                                 ("news_", "news", "Открыть новость"), ("smoke_", "smoke", "Открыть «Дымок»"),
+                                 ("cashback_", "cashback", "Открыть кэшбэк")):
         if arg.startswith(prefix) and arg[len(prefix):].isdigit():
             await message.answer("Жми, чтобы открыть в приложении:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(text=title, web_app=WebAppInfo(url=webapp_url(
@@ -1257,6 +1258,9 @@ async def cmd_admin(message: Message):
         "Бесплатные игры (только после пополнения)\n"
         "Заявки «Проверить пополнение» приходят в чат персонала с кнопками\n"
         "/unlock +7… — открыть вручную, /lock +7… — закрыть\n\n"
+        "Кэшбэк за пополнение\n"
+        "Чеки приходят в чат персонала: «Начислить» — колизы гостю по статусу\n"
+        "/cashback 12 1500 — начислить по чеку №12, если в CRM другая сумма, /cashbacks — непроверенные\n\n"
         "Колизы (сгорают, только если сутки нет трат)\n"
         "При балансе от 1000 списание — после игр на сумму баланса или чека о пополнении: чеки приходят в чат персонала\n"
         "/add_bonus +7… 150 — начислить в приложении\n"

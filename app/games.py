@@ -44,8 +44,11 @@ def format_wait(delta: timedelta) -> str:
 # ---------- «Дайс»: бесплатная попытка ----------
 
 def free_probability_reward(chance: int) -> int:
-    """Приз за бесплатную попытку: чем ниже шанс, тем больше колизов."""
-    return max(10, round(((100 - chance) * 1.2) / 10) * 10)
+    """Приз за бесплатную попытку: от 1 до 10 колизов — чем ниже шанс, тем больше."""
+    return max(1, min(10, round((100 - chance) / 9)))
+
+
+DICE_FREE_BONUS = {1: 1, 2: 3, 3: 5, 4: 6, 5: 8, 6: 10}   # бесплатные кости: очко → колизы (1–10)
 
 
 def roll_free_probability(chance: int, house_factor: float):

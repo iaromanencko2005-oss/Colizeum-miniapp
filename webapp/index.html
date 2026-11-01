@@ -1170,6 +1170,135 @@
   .edge-blur.top i:last-child { -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); -webkit-mask-image: linear-gradient(#000, transparent 55%); mask-image: linear-gradient(#000, transparent 55%); }
   .edge-blur.bottom i:first-child { -webkit-backdrop-filter: blur(1.5px); backdrop-filter: blur(1.5px); -webkit-mask-image: linear-gradient(0deg, #000 40%, transparent); mask-image: linear-gradient(0deg, #000 40%, transparent); }
   .edge-blur.bottom i:last-child { -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); -webkit-mask-image: linear-gradient(0deg, #000, transparent 55%); mask-image: linear-gradient(0deg, #000, transparent 55%); }
+
+  /* ===== живые элементы: мягкая анимация иконок и плиток ===== */
+  .pass { position: relative; }
+  .pass::after { content: ""; position: absolute; top: 0; bottom: 0; left: -60%; width: 38%; pointer-events: none;
+    background: linear-gradient(105deg, rgba(255,255,255,0), rgba(255,255,255,.32), rgba(255,255,255,0)); animation: shine 7s ease-in-out infinite; }
+  @keyframes shine { 0%, 70% { left: -60%; } 88%, 100% { left: 130%; } }
+  .pass-band > svg { animation: blink 3.6s ease-in-out infinite; transform-origin: center; }
+  .pass-band > svg:last-child { animation-delay: 1.8s; }
+  @keyframes blink { 0%, 38%, 100% { opacity: 1; transform: scale(1); } 44% { opacity: .15; transform: scale(.78); } 50% { opacity: 1; transform: scale(1.1); } 56% { transform: scale(1); } }
+  .burn svg { animation: flicker 1.6s ease-in-out infinite; transform-origin: 50% 90%; }
+  @keyframes flicker { 0%, 100% { transform: scale(1) rotate(0); } 30% { transform: scale(1.12, .92) rotate(-4deg); } 60% { transform: scale(.94, 1.1) rotate(3deg); } }
+  .tile.big.hot .ico-xl { animation: diceJump 2.8s ease-in-out infinite; transform-origin: 50% 100%; }
+  @keyframes diceJump { 0%, 52%, 100% { transform: translateY(0) rotate(0); } 62% { transform: translateY(-16px) rotate(-10deg); } 72% { transform: translateY(0) rotate(5deg) scale(1.04, .94); }
+    80% { transform: translateY(-5px) rotate(-2deg); } 88% { transform: translateY(0) rotate(0); } }
+  .tile.big:not(.hot) .ico-xl { animation: wobble 4.2s ease-in-out infinite; transform-origin: 60% 90%; }
+  @keyframes wobble { 0%, 60%, 100% { transform: rotate(0); } 68% { transform: rotate(-5deg); } 76% { transform: rotate(4deg); } 84% { transform: rotate(-2deg); } 92% { transform: rotate(0); } }
+  .hk-ico .smk { animation: smoke 3.3s ease-in infinite; opacity: 0; }
+  .hk-ico .s2 { animation-delay: 1.1s; } .hk-ico .s3 { animation-delay: 2.2s; }
+  @keyframes smoke { 0% { opacity: 0; transform: translateY(8px) scale(.85); } 30% { opacity: .95; } 100% { opacity: 0; transform: translateY(-10px) scale(1.2); } }
+  .hk-ico .coal { animation: coal 2.4s ease-in-out infinite; }
+  @keyframes coal { 0%, 100% { fill: #f5e92e; } 50% { fill: #ff9f1c; } }
+  @keyframes barGrow { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.62); } }
+  @keyframes vsPulse { 0%, 100% { transform: scale(1); text-shadow: none; } 50% { transform: scale(1.1); text-shadow: 0 0 16px rgba(245,233,46,.55); } }
+  @keyframes swing { 0%, 70%, 100% { transform: rotate(0); } 76% { transform: rotate(7deg); } 84% { transform: rotate(-5deg); } 92% { transform: rotate(2deg); } }
+  @keyframes draw { 0%, 15% { stroke-dashoffset: 26; } 45%, 85% { stroke-dashoffset: 0; } 100% { stroke-dashoffset: 26; } }
+  @keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2.5px); } }
+  [data-play="g-roulette"] .grow-art svg { animation: spin 10s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  [data-play="g-dice"] .grow-art svg { animation: diceJump 3.2s ease-in-out infinite; transform-origin: 50% 100%; }
+  .betc[data-play="g-crash"] circle { animation: rocket 1.6s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+  @keyframes rocket { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.35); opacity: .7; } }
+  .betc[data-play="g-slots"] svg path { animation: twinkle 2.4s ease-in-out infinite; }
+  .betc[data-play="g-slots"] svg path:nth-of-type(2) { animation-delay: .4s; } .betc[data-play="g-slots"] svg path:nth-of-type(3) { animation-delay: .8s; }
+  @keyframes twinkle { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+  .betc[data-play="g-hilo"] svg { animation: wobble 3.6s ease-in-out infinite; transform-origin: 50% 80%; }
+  .nw-chip i { animation: dotPulse 1.6s ease-in-out infinite; }
+  @keyframes dotPulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+  .mb-btn, .nw-yes { position: relative; overflow: hidden; }
+  .mb-btn::after { content: ""; position: absolute; top: 0; bottom: 0; left: -70%; width: 50%; background: linear-gradient(105deg, rgba(255,255,255,0), rgba(255,255,255,.55), rgba(255,255,255,0)); animation: shine 4.5s ease-in-out infinite; }
+  .steps3 div.on:last-of-type i, .steps3 div.on + div:not(.on) i { background-image: linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,.35), rgba(255,255,255,0)); background-size: 200% 100%; animation: bar 1.6s linear infinite; }
+  @keyframes bar { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+  /* появление экранов и плиток */
+  .panel.active { animation: panelIn .32s ease-out; }
+  @keyframes panelIn { from { opacity: 0; } to { opacity: 1; } }
+  #panel-cabinet.active .grid > .tile { animation: tileIn .45s cubic-bezier(.2,.8,.3,1) backwards; }
+  #panel-cabinet.active .grid > .tile:nth-child(2) { animation-delay: .04s; } #panel-cabinet.active .grid > .tile:nth-child(3) { animation-delay: .08s; }
+  #panel-cabinet.active .grid > .tile:nth-child(4) { animation-delay: .12s; } #panel-cabinet.active .grid > .tile:nth-child(5) { animation-delay: .15s; }
+  #panel-cabinet.active .grid > .tile:nth-child(6) { animation-delay: .18s; } #panel-cabinet.active .grid > .tile:nth-child(n+7) { animation-delay: .21s; }
+  @keyframes tileIn { from { opacity: 0; transform: translateY(14px) scale(.97); } to { opacity: 1; transform: none; } }
+  /* отклик на нажатие */
+  .tile, .grow, .betc, .fl, .preset, .callg button, button.primary, .mb-btn, .nw-btns button, .seg button, .opts button { transition: transform .14s ease; }
+  .tile:active, .grow:active, .betc:active, .fl:active, .preset:active, .callg button:active, button.primary:active, .mb-btn:active, .nw-btns button:active { transform: scale(.965); }
+  .bal b.bump, .balance-value.bump { animation: bump .5s ease; display: inline-block; }
+  @keyframes bump { 0% { transform: scale(1); } 35% { transform: scale(1.08); } 100% { transform: scale(1); } }
+
+  /* иллюстрированные плитки разделов */
+  .tile.big:not(.hot) { background: radial-gradient(circle at 85% 85%, rgba(255,255,255,.10), rgba(0,0,0,0) 60%), var(--surface); }
+  .tile.mid { grid-column: span 3; height: 132px; border-radius: 24px; }
+  .tile.mid.full { grid-column: span 6; }
+  .tile.mid .tile-title { font-size: 16px; }
+  .tile .ill { position: absolute; right: -6px; bottom: -8px; width: 88px; height: 88px; }
+  .tile.banner { grid-column: span 6; height: 104px; flex-direction: row; align-items: center; justify-content: space-between; border-radius: 24px; }
+  .tile.banner .tile-title { font-size: 19px; }
+  .tile.banner .ill { position: static; width: 92px; height: 92px; margin-right: -4px; flex-shrink: 0; }
+  .t-book { background: radial-gradient(circle at 85% 85%, rgba(47,211,198,.30), rgba(0,0,0,0) 62%), #0f1b1e; } .t-book .tile-sub { color: #7fe9df; }
+  .t-rate { background: radial-gradient(circle at 85% 85%, rgba(245,196,0,.28), rgba(0,0,0,0) 62%), #1c1607; } .t-rate .tile-sub { color: #ffd76a; }
+  .t-battle { background: radial-gradient(circle at 85% 85%, rgba(255,77,106,.30), rgba(0,0,0,0) 62%), #1e0c10; } .t-battle .tile-sub { color: #ff9aab; }
+  .t-team { background: radial-gradient(circle at 85% 85%, rgba(91,140,255,.32), rgba(0,0,0,0) 62%), #0e1323; } .t-team .tile-sub { color: #a9c1ff; }
+  .t-events { background: radial-gradient(circle at 88% 60%, rgba(255,138,61,.30), rgba(0,0,0,0) 55%), #1d120b; } .t-events .tile-sub { color: #ffb98a; }
+  .t-checkin { background: radial-gradient(circle at 85% 85%, rgba(61,220,132,.28), rgba(0,0,0,0) 62%), #0c1c13; } .t-checkin .tile-sub { color: #8ff0b9; }
+  .t-friends { background: radial-gradient(circle at 85% 85%, rgba(255,107,193,.28), rgba(0,0,0,0) 62%), #1d0d18; } .t-friends .tile-sub { color: #ffa8dc; }
+  .t-battle .dot { position: absolute; top: 14px; right: 14px; }
+  .ill .scan { animation: scan 2.6s linear infinite; }
+  @keyframes scan { from { transform: translateY(-6px); } to { transform: translateY(36px); } }
+  .ill .aim { animation: aim 2.6s ease-in-out infinite; transform-origin: 46px 38px; }
+  @keyframes aim { 0%, 100% { transform: scale(1); opacity: .9; } 50% { transform: scale(.82); opacity: 1; } }
+  .ill .pod { transform-box: fill-box; transform-origin: 50% 100%; animation: barGrow 3s ease-in-out infinite; }
+  .ill .p1 { animation-delay: .2s; } .ill .p3 { animation-delay: .4s; }
+  @keyframes barGrow { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.82); } }
+  .ill .crown { animation: crown 3s ease-in-out infinite; transform-origin: 49px 30px; }
+  @keyframes crown { 0%, 100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-5px) rotate(-6deg); } }
+  .ill .spark { animation: twinkle 2s ease-in-out infinite; } .ill .sp2 { animation-delay: 1s; }
+  .ill .sw1 { animation: clash1 2.2s ease-in-out infinite; transform-origin: 48px 70px; }
+  .ill .sw2 { animation: clash2 2.2s ease-in-out infinite; transform-origin: 48px 70px; }
+  @keyframes clash1 { 0%, 40%, 100% { transform: rotate(0); } 55% { transform: rotate(12deg); } 62% { transform: rotate(-2deg); } }
+  @keyframes clash2 { 0%, 40%, 100% { transform: rotate(0); } 55% { transform: rotate(-12deg); } 62% { transform: rotate(2deg); } }
+  .ill .clash { animation: clash 2.2s ease-in-out infinite; transform-origin: 48px 30px; opacity: 0; }
+  @keyframes clash { 0%, 50% { opacity: 0; transform: scale(.4); } 58% { opacity: 1; transform: scale(1.15); } 75%, 100% { opacity: 0; transform: scale(.9); } }
+  .ill .hd { animation: bob 2.4s ease-in-out infinite; } .ill .h2 { animation-delay: .4s; } .ill .h3 { animation-delay: .8s; }
+  @keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+  .ill .bubble { animation: pop 3.2s ease-in-out infinite; transform-origin: 66px 28px; }
+  @keyframes pop { 0%, 55%, 100% { transform: scale(0); opacity: 0; } 65% { transform: scale(1.12); opacity: 1; } 72%, 92% { transform: scale(1); opacity: 1; } }
+  .ill .cal { animation: swing 4s ease-in-out infinite; transform-origin: 48px 16px; }
+  .ill .conf { animation: twinkle 1.8s ease-in-out infinite; } .ill .c2 { animation-delay: .6s; } .ill .c3 { animation-delay: 1.2s; }
+  .ill .rcpt { animation: bob 3s ease-in-out infinite; }
+  .ill .chk { stroke-dasharray: 26; animation: draw 3.2s ease-in-out infinite; }
+  .ill .lid { animation: lid 3s ease-in-out infinite; transform-origin: 22px 52px; }
+  @keyframes lid { 0%, 55%, 100% { transform: translateY(0) rotate(0); } 65% { transform: translateY(-9px) rotate(-8deg); } 75% { transform: translateY(0) rotate(0); } 82% { transform: translateY(-3px); } }
+
+  /* кэшбэк */
+  .t-cash { background: radial-gradient(circle at 88% 65%, rgba(245,233,46,.26), rgba(0,0,0,0) 55%), radial-gradient(circle at 10% 0%, rgba(61,220,132,.18), rgba(0,0,0,0) 50%), #121a0e; }
+  .t-cash .tile-sub { color: #d6f07a; }
+  .ill .coin { animation: coinDrop 3s cubic-bezier(.3,1.4,.5,1) infinite; }
+  .ill .k2 { animation-delay: .12s; } .ill .k3 { animation-delay: .24s; }
+  @keyframes coinDrop { 0%, 60%, 100% { transform: translateY(0); } 68% { transform: translateY(-9px); } 76% { transform: translateY(0); } }
+  .ill .rc2 { animation: swing 4.4s ease-in-out infinite; transform-origin: 32px 14px; }
+  .cash-row { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: left; border: 1px solid #3a3500; color: var(--text);
+    background: radial-gradient(circle at 90% 50%, rgba(245,233,46,.18), rgba(0,0,0,0) 60%), #15140a; border-radius: 20px; padding: 14px 16px; margin-bottom: 12px; font-family: "Geologica"; cursor: pointer; }
+  .cash-row b { display: block; font-size: 15px; } .cash-row small { display: block; font-size: 12.5px; color: #d6f07a; margin-top: 2px; }
+  .cash-row span { background: var(--accent); color: #000; border-radius: 12px; padding: 9px 13px; font-weight: 700; font-size: 13.5px; flex-shrink: 0; }
+  .cash-card { display: flex; align-items: center; justify-content: space-between; background: linear-gradient(135deg, #1d1a05, #121212 70%); border: 1px solid #3a3500; border-radius: 24px; padding: 16px 18px; margin-bottom: 10px; }
+  .cc-cap { font-size: 12.5px; color: var(--muted); } .cc-tier { font-family: "Unbounded"; font-weight: 700; font-size: 20px; margin-top: 2px; }
+  .cc-pct { font-family: "Unbounded"; font-weight: 800; font-size: 40px; color: var(--accent); letter-spacing: -1px; }
+  .cc-table { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 12px; }
+  .cc-table div { background: var(--surface); border-radius: 14px; padding: 9px 10px; font-size: 12px; color: var(--muted); border: 1.5px solid transparent; }
+  .cc-table div b { display: block; color: var(--text); font-size: 15px; font-family: "Unbounded"; margin-top: 2px; }
+  .cc-table div.on { border-color: var(--accent); }
+  .cc-photo { width: 100%; min-height: 64px; border: 1.5px dashed #3a3a40; background: #18181b; color: var(--muted); border-radius: 16px; font-family: "Geologica"; font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 8px; }
+  .cc-photo.has { border-style: solid; border-color: var(--accent); color: var(--text); }
+  .cc-photo img { height: 56px; border-radius: 8px; }
+  .cc-calc { background: #15140a; border-radius: 16px; padding: 12px 14px; font-size: 14px; color: var(--muted); margin: 2px 0 12px; }
+  .cc-calc b { color: var(--accent); font-family: "Unbounded"; font-size: 18px; }
+  .cc-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--surface); border-radius: 16px; padding: 12px 14px; margin-bottom: 6px; font-size: 13.5px; }
+  .cc-h small { display: block; color: var(--muted); font-size: 12px; }
+  .cc-h em { font-style: normal; font-weight: 700; font-size: 12.5px; border-radius: 10px; padding: 5px 9px; background: #2a2a2e; color: var(--muted); white-space: nowrap; }
+  .cc-h em.approved { background: rgba(61,220,132,.16); color: #8ff0b9; } .cc-h em.pending { background: rgba(245,233,46,.14); color: var(--accent); } .cc-h em.rejected { background: rgba(255,77,106,.14); color: #ff9aab; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
   .badges { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
   .badge2 { background: var(--surface); border-radius: 16px; padding: 12px 14px; font-size: 13.5px; font-weight: 600; color: var(--muted-2); display: flex; align-items: center; gap: 8px; }
   .badge2 i { width: 10px; height: 10px; border-radius: 50%; background: var(--surface-2); flex-shrink: 0; }
@@ -1248,6 +1377,15 @@
   <div class="newsc hidden" id="news-card"></div>
 
   <div class="grid">
+    <button class="tile banner t-cash" onclick="showPanel('cashback')">
+      <div><div class="tile-title">Кэшбэк за пополнение</div><div class="tile-sub" id="tile-cash-sub">Пополнил в клубе — пришли чек и получи колизы</div></div>
+      <svg class="ill" viewBox="0 0 96 96">
+        <g class="rc2"><path d="M14 16h36v58l-4.5-3.3-4.5 3.3-4.5-3.3-4.5 3.3-4.5-3.3-4.5 3.3-4.5-3.3-4.5 3.3z" fill="#f2fff7"/><path d="M21 28h22M21 36h16M21 44h19" stroke="#9fb8a9" stroke-width="3" stroke-linecap="round"/><text x="32" y="62" text-anchor="middle" font-family="Unbounded" font-weight="800" font-size="10" fill="#1d6b43">₽</text></g>
+        <g class="coin k3"><ellipse cx="68" cy="80" rx="16" ry="6" fill="#b9a300"/><rect x="52" y="74" width="32" height="6" fill="#d4bd00"/><ellipse cx="68" cy="74" rx="16" ry="6" fill="#f5e92e"/></g>
+        <g class="coin k2"><ellipse cx="68" cy="68" rx="16" ry="6" fill="#b9a300"/><rect x="52" y="62" width="32" height="6" fill="#d4bd00"/><ellipse cx="68" cy="62" rx="16" ry="6" fill="#f5e92e"/></g>
+        <g class="coin k1"><ellipse cx="68" cy="56" rx="16" ry="6" fill="#b9a300"/><rect x="52" y="50" width="32" height="6" fill="#d4bd00"/><ellipse cx="68" cy="50" rx="16" ry="6" fill="#f5e92e"/><text x="68" y="53.5" text-anchor="middle" font-family="Unbounded" font-weight="800" font-size="8" fill="#6b5e00">%</text></g>
+        <path class="spark sp1" d="M84 22l1.5 4 4 1.5-4 1.5-1.5 4-1.5-4-4-1.5 4-1.5z" fill="#fff6a8"/></svg>
+    </button>
     <button class="tile big hot" onclick="showPanel('activities')">
       <div><div class="tile-title">Игры</div><div class="tile-sub" id="quick-games-sub">Рулетка, кости, дайс</div></div>
       <svg class="ico-xl" viewBox="0 0 96 96"><rect x="14" y="14" width="56" height="56" rx="14" fill="#f5e92e" transform="rotate(-12 42 42)"/><circle cx="32" cy="34" r="5" fill="#000"/><circle cx="52" cy="30" r="5" fill="#000"/><circle cx="36" cy="54" r="5" fill="#000"/><circle cx="56" cy="50" r="5" fill="#000"/></svg>
@@ -1258,36 +1396,64 @@
     </button>
     <button class="tile smoke" onclick="showPanel('smoke')">
       <div><div class="tile-title">Дымок<span class="tag18">18+</span></div><div class="tile-sub" id="tile-smoke-sub">Собери свой микс — подадим к месту</div></div>
-      <svg class="hk-ico" viewBox="0 0 96 96" fill="none"><path d="M40 8c-4 4 4 6 0 10M50 4c-4 5 4 7 0 12M58 10c-3 3 3 5 0 8" stroke="#b9b3ff" stroke-width="2.2" stroke-linecap="round" opacity=".8"/><path d="M38 22h20l-4 9H42z" fill="#f5e92e"/><path d="M33 34h30" stroke="#8a8a94" stroke-width="3" stroke-linecap="round"/><rect x="45.5" y="31" width="5" height="28" rx="2" fill="#6a6a74"/><path d="M48 57c-11 0-18 7-18 15 0 9 7 15 18 15s18-6 18-15c0-8-7-15-18-15z" fill="#3a3550"/><path d="M36 74c3 5 8 8 12 8" stroke="#6b64a8" stroke-width="3" stroke-linecap="round"/><path d="M51 46c14 0 22 6 22 16v10c0 4 3 6 6 6" stroke="#f5e92e" stroke-width="3.2" stroke-linecap="round"/></svg>
+      <svg class="hk-ico" viewBox="0 0 96 96" fill="none"><g stroke="#b9b3ff" stroke-width="2.2" stroke-linecap="round"><path class="smk s1" d="M40 8c-4 4 4 6 0 10"/><path class="smk s2" d="M50 4c-4 5 4 7 0 12"/><path class="smk s3" d="M58 10c-3 3 3 5 0 8"/></g><path class="coal" d="M38 22h20l-4 9H42z" fill="#f5e92e"/><path d="M33 34h30" stroke="#8a8a94" stroke-width="3" stroke-linecap="round"/><rect x="45.5" y="31" width="5" height="28" rx="2" fill="#6a6a74"/><path d="M48 57c-11 0-18 7-18 15 0 9 7 15 18 15s18-6 18-15c0-8-7-15-18-15z" fill="#3a3550"/><path d="M36 74c3 5 8 8 12 8" stroke="#6b64a8" stroke-width="3" stroke-linecap="round"/><path d="M51 46c14 0 22 6 22 16v10c0 4 3 6 6 6" stroke="#f5e92e" stroke-width="3.2" stroke-linecap="round"/></svg>
     </button>
-    <button class="tile small" onclick="showPanel('booking')">
-      <svg class="ico" style="color:var(--accent)"><use href="#i-pc"/></svg>
-      <div class="tile-title">Бронь</div>
+    <button class="tile mid t-book" onclick="showPanel('booking')">
+      <div><div class="tile-title">Бронь</div><div class="tile-sub">выбери место на схеме</div></div>
+      <svg class="ill" viewBox="0 0 96 96"><defs><linearGradient id="gScr" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2fd3c6"/><stop offset="1" stop-color="#3b6cff"/></linearGradient><clipPath id="cScr"><rect x="17" y="21" width="58" height="34" rx="4"/></clipPath></defs>
+        <rect x="12" y="16" width="68" height="44" rx="8" fill="#1f2d35"/><rect x="17" y="21" width="58" height="34" rx="4" fill="url(#gScr)"/>
+        <g clip-path="url(#cScr)"><rect class="scan" x="17" y="21" width="58" height="5" fill="#fff" opacity=".28"/></g>
+        <circle class="aim" cx="46" cy="38" r="7" stroke="#fff" stroke-width="2" fill="none"/><path class="aim" d="M46 27v5M46 44v5M35 38h5M52 38h5" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+        <rect x="42" y="60" width="8" height="10" fill="#2b3c46"/><rect x="30" y="70" width="32" height="5" rx="2.5" fill="#2b3c46"/>
+        <rect x="18" y="80" width="60" height="9" rx="3.5" fill="#364b56"/><path d="M24 84.5h4M32 84.5h4M40 84.5h16M60 84.5h4M68 84.5h4" stroke="#7fe9df" stroke-width="2" stroke-linecap="round" opacity=".7"/></svg>
     </button>
-    <button class="tile small" onclick="showPanel('rating')">
-      <svg class="ico" viewBox="0 0 32 32"><rect x="12" y="6" width="8" height="21" rx="2" fill="#f5e92e"/><rect x="3" y="13" width="8" height="14" rx="2" fill="#5a5a62"/><rect x="21" y="17" width="8" height="10" rx="2" fill="#5a5a62"/></svg>
+    <button class="tile mid t-rate" onclick="showPanel('rating')">
       <div><div class="tile-title">Рейтинг</div><div class="tile-sub" id="tile-rating-sub">призы</div></div>
+      <svg class="ill" viewBox="0 0 96 96">
+        <rect class="pod p2" x="12" y="56" width="24" height="30" rx="4" fill="#c9ccd3"/><rect class="pod p1" x="37" y="44" width="24" height="42" rx="4" fill="#f5c400"/><rect class="pod p3" x="62" y="64" width="24" height="22" rx="4" fill="#d08a4a"/>
+        <text x="24" y="76" text-anchor="middle" font-family="Unbounded" font-weight="800" font-size="13" fill="#3a3a40">2</text><text x="49" y="69" text-anchor="middle" font-family="Unbounded" font-weight="800" font-size="15" fill="#5a4300">1</text><text x="74" y="80" text-anchor="middle" font-family="Unbounded" font-weight="800" font-size="12" fill="#5a3416">3</text>
+        <path class="crown" d="M36 38l4-16 9 9 9-9 4 16z" fill="#f5e92e" stroke="#c9a400" stroke-width="1.5" stroke-linejoin="round"/>
+        <path class="spark sp1" d="M20 30l1.5 4 4 1.5-4 1.5-1.5 4-1.5-4-4-1.5 4-1.5z" fill="#ffe680"/><path class="spark sp2" d="M78 34l1.2 3 3 1.2-3 1.2-1.2 3-1.2-3-3-1.2 3-1.2z" fill="#ffe680"/></svg>
     </button>
-    <button class="tile small" onclick="showPanel('battle')">
-      <div class="vs">VS</div>
-      <div class="tile-title">Батл</div>
+    <button class="tile mid t-battle" onclick="showPanel('battle')">
+      <div><div class="tile-title">Батл</div><div class="tile-sub">вызови друга на дуэль</div></div>
       <div class="dot hidden" id="tile-battle-dot"></div>
+      <svg class="ill" viewBox="0 0 96 96">
+        <g transform="rotate(-38 48 54)"><g class="sw sw1"><rect x="45" y="12" width="6" height="48" rx="3" fill="#eef1f6"/><path d="M45 12l3-6 3 6z" fill="#eef1f6"/><rect x="36" y="58" width="24" height="6" rx="3" fill="#ff4d6a"/><rect x="45.5" y="64" width="5" height="14" rx="2" fill="#7a2a36"/><circle cx="48" cy="81" r="4.5" fill="#ff4d6a"/></g></g>
+        <g transform="rotate(38 48 54)"><g class="sw sw2"><rect x="45" y="12" width="6" height="48" rx="3" fill="#eef1f6"/><path d="M45 12l3-6 3 6z" fill="#eef1f6"/><rect x="36" y="58" width="24" height="6" rx="3" fill="#5b8cff"/><rect x="45.5" y="64" width="5" height="14" rx="2" fill="#24346a"/><circle cx="48" cy="81" r="4.5" fill="#5b8cff"/></g></g>
+        <path class="clash" d="M48 18l3 8 8-3-5 7 7 5-8 1 1 8-6-6-6 6 1-8-8-1 7-5-5-7 8 3z" fill="#f5e92e"/></svg>
     </button>
-    <button class="tile wide" onclick="showPanel('team')">
-      <svg class="ico" viewBox="0 0 40 40"><rect x="4" y="12" width="32" height="18" rx="9" stroke="#f5e92e" stroke-width="2.4" fill="none"/><path d="M12 18v6M9 21h6" stroke="#f5e92e" stroke-width="2.4" stroke-linecap="round"/><circle cx="27" cy="19" r="1.8" fill="#f5e92e"/><circle cx="30" cy="23" r="1.8" fill="#5a5a62"/></svg>
+    <button class="tile mid t-team" onclick="showPanel('team')">
       <div><div class="tile-title">Тиммейты</div><div class="tile-sub" id="tile-team-sub">найди с кем играть</div></div>
+      <svg class="ill" viewBox="0 0 96 96">
+        <g class="hd h2"><circle cx="24" cy="50" r="10" fill="#5b8cff"/><path d="M8 88c0-11 7-18 16-18s16 7 16 18z" fill="#5b8cff"/></g>
+        <g class="hd h3"><circle cx="72" cy="50" r="10" fill="#ff6bc1"/><path d="M56 88c0-11 7-18 16-18s16 7 16 18z" fill="#ff6bc1"/></g>
+        <g class="hd h1"><circle cx="48" cy="44" r="12" fill="#f5e92e"/><path d="M28 90c0-13 9-22 20-22s20 9 20 22z" fill="#f5e92e"/><path d="M34 44a14 14 0 0 1 28 0" stroke="#1a1a1e" stroke-width="3" fill="none"/><rect x="31" y="42" width="6" height="9" rx="3" fill="#1a1a1e"/><rect x="59" y="42" width="6" height="9" rx="3" fill="#1a1a1e"/><path d="M62 50c0 6-4 8-9 8" stroke="#1a1a1e" stroke-width="2" fill="none" stroke-linecap="round"/></g>
+        <g class="bubble"><rect x="60" y="8" width="28" height="18" rx="9" fill="#fff"/><path d="M66 25l-2 6 7-6z" fill="#fff"/><text x="74" y="21" text-anchor="middle" font-family="Unbounded" font-weight="800" font-size="11" fill="#0f1424">+1</text></g></svg>
     </button>
-    <button class="tile wide" onclick="showPanel('events')">
-      <svg class="ico" id="tile-events-ico" viewBox="0 0 40 40"><rect x="6" y="8" width="28" height="26" rx="6" stroke="#f5e92e" stroke-width="2.4" fill="none"/><path d="M6 16h28M14 5v6M26 5v6" stroke="#f5e92e" stroke-width="2.4" stroke-linecap="round"/><rect x="12" y="21" width="7" height="6" rx="1.5" fill="#5a5a62"/></svg>
+    <button class="tile banner t-events" onclick="showPanel('events')">
       <div><div class="tile-title">Афиша</div><div class="tile-sub" id="tile-events-sub">события клуба</div></div>
+      <svg class="ill" viewBox="0 0 96 96">
+        <path class="conf c1" d="M14 22h6" stroke="#ffd166" stroke-width="3" stroke-linecap="round"/><path class="conf c2" d="M80 18l4 4" stroke="#ff6bc1" stroke-width="3" stroke-linecap="round"/><circle class="conf c3" cx="84" cy="56" r="2.5" fill="#5ac8fa"/>
+        <g class="cal"><rect x="22" y="20" width="52" height="60" rx="10" fill="#fff"/><path d="M22 30a10 10 0 0 1 10-10h32a10 10 0 0 1 10 10v8H22z" fill="#ff6a3d"/>
+          <rect x="34" y="14" width="5" height="12" rx="2.5" fill="#3a3a40"/><rect x="57" y="14" width="5" height="12" rx="2.5" fill="#3a3a40"/>
+          <text id="tile-ev-mon" x="48" y="35" text-anchor="middle" font-family="Unbounded" font-weight="700" font-size="8" fill="#fff" letter-spacing="1">СКОРО</text>
+          <text id="tile-ev-day" x="48" y="69" text-anchor="middle" font-family="Unbounded" font-weight="800" font-size="26" fill="#141416">★</text></g>
+        <g id="tile-ev-glyph"></g></svg>
     </button>
-    <button class="tile wide hidden" id="ci-card">
-      <svg class="ico" viewBox="0 0 40 40"><path d="M10 5h20v30l-3.3-2.5L23.3 35 20 32.5 16.7 35l-3.4-2.5L10 35Z" stroke="#f5e92e" stroke-width="2.4" fill="none" stroke-linejoin="round"/><path d="M15 18l3.5 3.5L25 15" stroke="#f5e92e" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <button class="tile mid t-checkin hidden" id="ci-card">
       <div><div class="tile-title" id="ci-title">Я в клубе</div><div class="tile-sub" id="ci-sub">+30 за чек</div></div>
+      <svg class="ill" viewBox="0 0 96 96">
+        <g class="rcpt"><path d="M22 10h44v74l-5.5-4-5.5 4-5.5-4-5.5 4-5.5-4-5.5 4-5.5-4-5.5 4z" fill="#eafff3"/><path d="M30 24h28M30 33h20M30 42h24M30 51h14" stroke="#9fb8a9" stroke-width="3" stroke-linecap="round"/></g>
+        <circle cx="66" cy="64" r="17" fill="#3ddc84"/><path class="chk" d="M58 64l6 6 11-12" stroke="#063d1f" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
-    <button class="tile wide hidden" id="invite-card">
-      <svg class="ico" viewBox="0 0 40 40"><circle cx="15" cy="15" r="6" stroke="#f5e92e" stroke-width="2.4" fill="none"/><circle cx="27" cy="17" r="5" stroke="#5a5a62" stroke-width="2.4" fill="none"/><path d="M5 33c1.5-5.5 5.5-8 10-8s8.5 2.5 10 8M24 26c4.5 0 8 2 10 7" stroke="#f5e92e" stroke-width="2.4" fill="none" stroke-linecap="round"/></svg>
+    <button class="tile mid t-friends hidden" id="invite-card">
       <div><div class="tile-title">Друзья</div><div class="tile-sub" id="invite-sub">+50 за друга</div></div>
+      <svg class="ill" viewBox="0 0 96 96">
+        <path class="spark sp1" d="M16 30l1.5 4 4 1.5-4 1.5-1.5 4-1.5-4-4-1.5 4-1.5z" fill="#ffd1ec"/><path class="spark sp2" d="M82 22l1.2 3 3 1.2-3 1.2-1.2 3-1.2-3-3-1.2 3-1.2z" fill="#ffd1ec"/>
+        <rect x="22" y="50" width="52" height="36" rx="6" fill="#ff6bc1"/><rect x="44" y="50" width="8" height="36" fill="#f5e92e"/>
+        <g class="lid"><rect x="17" y="38" width="62" height="14" rx="5" fill="#ff8fd1"/><rect x="44" y="38" width="8" height="14" fill="#f5e92e"/>
+          <path d="M48 38c-8-12-20-10-18-3 2 5 12 4 18 3zM48 38c8-12 20-10 18-3-2 5-12 4-18 3z" fill="#f5e92e"/></g></svg>
     </button>
   </div>
   <input type="file" id="ci-file" accept="image/*" class="hidden">
@@ -1301,6 +1467,32 @@
     <button onclick="showPanel('promotions')">Все акции клуба<svg><use href="#i-chev"/></svg></button>
     <button onclick="openPolicy()">Политика обработки данных<svg><use href="#i-chev"/></svg></button>
   </div>
+</div>
+
+<!-- ================= КЭШБЭК ================= -->
+<div class="panel" id="panel-cashback">
+  <div class="bar"><button class="back" data-back><svg><use href="#i-back"/></svg></button><div class="pill"><i></i><span class="bal-val">0</span></div></div>
+  <div class="title">Кэшбэк</div>
+  <div class="lead">Пополнил счёт в клубе — пришли чек, и администратор начислит колизы по твоему статусу</div>
+  <div class="cash-card">
+    <div class="cc-l"><div class="cc-cap">Твой статус</div><div class="cc-tier" id="cc-tier">—</div></div>
+    <div class="cc-pct" id="cc-pct">0%</div>
+  </div>
+  <div class="cc-table" id="cc-table"></div>
+  <div class="card2">
+    <div class="lbl"><span>Чек о пополнении</span></div>
+    <button class="cc-photo" id="cc-photo"><span id="cc-photo-l">Прикрепить фото чека или скрин оплаты</span><img id="cc-thumb" class="hidden" alt=""></button>
+    <input type="file" id="cc-file" accept="image/*" class="hidden">
+  </div>
+  <div class="field-l">Номер, на который пополнял</div>
+  <input type="tel" id="cc-phone" placeholder="+7 999 123-45-67">
+  <div class="field-l">Сумма пополнения, ₽</div>
+  <input type="number" inputmode="numeric" id="cc-amount" placeholder="Например, 2000">
+  <div class="cc-calc" id="cc-calc">Укажи сумму — посчитаем кэшбэк</div>
+  <button class="primary" id="cc-submit">Отправить на проверку</button>
+  <div class="hint" style="text-align:center">Администратор сверит пополнение с системой клуба. Подтверждённый чек также открывает бесплатные игры и списание</div>
+  <div class="h2" id="cc-hist-h">Мои чеки</div>
+  <div id="cc-hist"></div>
 </div>
 
 <!-- ================= ДЫМОК ================= -->
@@ -1431,8 +1623,8 @@
     <div class="bl-or"><span>или</span></div>
     <div class="bl-opt">
       <div class="bl-h"><b>Пришли чек о пополнении в клубе</b></div>
-      <div class="bl-s" id="bl-receipt-s">Администратор проверит — и одно списание откроется</div>
-      <button class="primary" id="bl-receipt">Сфотографировать чек</button>
+      <div class="bl-s" id="bl-receipt-s">В разделе «Кэшбэк»: начислим кэшбэк по статусу, и списание откроется на 48 часов</div>
+      <button class="primary" id="bl-receipt">Прислать чек</button>
     </div>
     <input type="file" id="bl-file" accept="image/*" class="hidden">
   </div>
@@ -1459,26 +1651,27 @@
   <div class="bar"><button class="back" data-back><svg><use href="#i-back"/></svg></button><div class="pill"><i></i><span class="bal-val" id="games-balance">0</span></div></div>
   <div class="title">Игры</div>
   <div class="lead">Бесплатные — раз в сутки. Остальные на колизы.</div>
+  <button class="cash-row" onclick="showPanel('cashback')"><div><b>Кэшбэк за пополнение</b><small id="cash-row-sub">главный способ получить колизы</small></div><span>Получить</span></button>
   <div class="glock hidden" id="games-lock">
     <div class="glock-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="3"/><path d="M8 10.5V7.5a4 4 0 018 0v3"/><circle cx="12" cy="15.5" r="1.3" fill="currentColor" stroke="none"/></svg></div>
     <div class="glock-t" id="glock-title">Бесплатные игры — после пополнения</div>
     <div class="glock-d" id="glock-text"></div>
     <div class="glock-steps" id="glock-steps">
       <div><b>1</b>Пополни счёт на стойке клуба</div>
-      <div><b>2</b>Нажми «Проверить пополнение»</div>
-      <div><b>3</b>Администратор сверит с CRM — и игры откроются</div>
+      <div><b>2</b>Пришли чек в разделе «Кэшбэк»</div>
+      <div><b>3</b>Администратор сверит — начислит кэшбэк и откроет игры</div>
     </div>
-    <button class="primary" id="topup-check">Проверить пополнение</button>
+    <button class="primary" id="topup-check">Прислать чек</button>
   </div>
 
   <div class="grow" data-play="g-roulette">
     <div class="grow-art"><svg width="42" height="42" viewBox="0 0 42 42"><circle cx="21" cy="21" r="17" fill="#f5e92e"/><path d="M21 4v34M4 21h34M9 9l24 24M33 9L9 33" stroke="#000" stroke-width="2"/><circle cx="21" cy="21" r="5" fill="#000"/></svg></div>
-    <div><div class="grow-name">Рулетка</div><div class="grow-sub">10–80 колизов</div></div>
+    <div><div class="grow-name">Рулетка</div><div class="grow-sub">1–10 колизов</div></div>
     <div class="go" id="row-spin">Крутить</div>
   </div>
   <div class="grow" data-play="g-dice">
     <div class="grow-art"><svg width="40" height="40" viewBox="0 0 40 40"><rect x="5" y="5" width="30" height="30" rx="8" fill="#f5e92e"/><circle cx="13" cy="13" r="3" fill="#000"/><circle cx="20" cy="20" r="3" fill="#000"/><circle cx="27" cy="27" r="3" fill="#000"/></svg></div>
-    <div><div class="grow-name">Кости</div><div class="grow-sub" id="row-dice-sub">×10 за каждое очко</div></div>
+    <div><div class="grow-name">Кости</div><div class="grow-sub" id="row-dice-sub">1–10 колизов</div></div>
     <div class="go" id="row-dice">Бросить</div>
   </div>
   <div class="grow" data-play="g-prob">
@@ -1513,7 +1706,7 @@
   <div class="bar"><button class="back" data-back><svg><use href="#i-back"/></svg></button><div class="pill"><i></i><span class="bal-val">0</span></div></div>
   <!-- Рулетка -->
   <div class="card roulette-card game-card" id="g-roulette">
-    <div class="game-head"><div class="game-title">Рулетка</div><div class="game-tag">10–80 колизов</div></div>
+    <div class="game-head"><div class="game-title">Рулетка</div><div class="game-tag">1–10 колизов</div></div>
     <div class="wheel-wrap">
       <div class="wheel" id="wheel"></div>
       <div class="wheel-pointer"></div>
@@ -1530,7 +1723,7 @@
 
   <!-- Кости -->
   <div class="card game-card" id="g-dice" style="display:flex;flex-direction:column;align-items:center;gap:12px">
-    <div class="game-head"><div class="game-title">Кости на баланс</div><div class="game-tag" id="dice-tag">×10 колизов</div></div>
+    <div class="game-head"><div class="game-title">Кости на баланс</div><div class="game-tag" id="dice-tag">1–10 колизов</div></div>
     <div class="dice-face" id="dice-face"><span id="dice-label">–</span></div>
     <div class="result-value hidden" id="dice-bonus" style="font-size:13px"></div>
     <button class="primary" id="dice-button">Бросить бесплатно</button>
@@ -1985,6 +2178,7 @@ function showPanel(name, isBack) {
   if (name === "team" && typeof loadTeam === "function") loadTeam();
   if (name === "events" && typeof loadEvents === "function") loadEvents();
   if (name === "news" && typeof loadNews === "function") loadNews();
+  if (name === "cashback" && typeof loadCashback === "function") loadCashback();
   if (typeof smokeOnPanel === "function") smokeOnPanel(name === "smoke");
   if (name === "hookah" && typeof renderHookahOrder === "function") renderHookahOrder();
   if (name === "profile" && typeof renderProfile === "function") renderProfile();
@@ -2050,7 +2244,14 @@ function fmt(n) {
 }
 function renderBalance() {
   const b = me ? me.balance : 0;
-  $("balance-value").textContent = fmt(b);
+  const bv = $("balance-value");
+  if (bv.dataset.v !== void 0 && +bv.dataset.v !== b) {
+    bv.classList.remove("bump");
+    void bv.offsetWidth;
+    bv.classList.add("bump");
+  }
+  bv.dataset.v = b;
+  bv.textContent = fmt(b);
   $("balance-unit").textContent = koliz(b);
   document.querySelectorAll(".bal-val").forEach((el) => el.textContent = fmt(b));
   $("bet-balance").textContent = fmt(b);
@@ -2080,27 +2281,24 @@ function renderGamesLock() {
     return;
   }
   const btn = $("topup-check"), sum = fmt(L.min_topup);
-  box.classList.toggle("pending", L.state === "pending");
-  $("glock-steps").classList.toggle("hidden", L.state === "pending" || !!L.by_admin);
-  btn.classList.toggle("hidden", !!L.by_admin);
+  const pending = L.state === "pending" || !!(me.cashback && me.cashback.pending);
+  box.classList.toggle("pending", pending);
+  $("glock-steps").classList.toggle("hidden", pending || !!L.by_admin);
+  btn.classList.toggle("hidden", !!L.by_admin || pending);
+  btn.disabled = false;
+  btn.textContent = "Прислать чек";
   if (L.by_admin) {
     $("glock-title").textContent = "Бесплатные игры закрыты";
     $("glock-text").textContent = "Доступ закрыл администратор — уточни на стойке клуба. Игры на колизы, магазин и батлы работают.";
-  } else if (L.state === "pending") {
+  } else if (pending) {
     $("glock-title").textContent = "Проверяем пополнение";
-    $("glock-text").textContent = "Заявка у администратора — обычно это пара минут. Как только подтвердит, игры откроются здесь, а бот пришлёт сообщение.";
-    btn.disabled = !!L.retry_in;
-    btn.textContent = L.retry_in ? "Напомнить можно через ".concat(L.retry_in) : "Напомнить администратору";
+    $("glock-text").textContent = "Чек у администратора. Как только подтвердит, начислим кэшбэк и откроем игры — бот пришлёт сообщение.";
   } else if (L.state === "declined") {
     $("glock-title").textContent = "Пополнение не нашли";
-    $("glock-text").textContent = "Администратор не увидел пополнения от ".concat(sum, " ₽ на твоём номере. Пополни счёт на стойке и отправь проверку ещё раз.");
-    btn.disabled = !!L.retry_in;
-    btn.textContent = L.retry_in ? "Повторить через ".concat(L.retry_in) : "Проверить пополнение";
+    $("glock-text").textContent = "Администратор не увидел пополнения на твоём номере. Пополни счёт от ".concat(sum, " ₽ и пришли чек в разделе «Кэшбэк».");
   } else {
     $("glock-title").textContent = "Бесплатные игры — после пополнения";
-    $("glock-text").textContent = "Рулетка, кости и дайс бесплатно каждый день — для гостей, которые пополняли счёт в клубе от ".concat(sum, " ₽. Игры на колизы доступны и так.");
-    btn.disabled = false;
-    btn.textContent = "Проверить пополнение";
+    $("glock-text").textContent = "Рулетка, кости и дайс бесплатно каждый день — для гостей, которые пополняли счёт в клубе. Пришли чек о пополнении от ".concat(sum, " ₽ — заодно получишь кэшбэк.");
   }
   if (L.state === "pending" && !glockPoll) {
     glockPoll = setInterval(() => {
@@ -2112,24 +2310,7 @@ function renderGamesLock() {
     glockPoll = 0;
   }
 }
-$("topup-check").addEventListener("click", async () => {
-  const btn = $("topup-check");
-  btn.disabled = true;
-  try {
-    const r = await api("/api/topup/check", { initData });
-    me.games_lock = r.games_lock;
-    if (!r.games_lock.locked) {
-      showToast("Бесплатные игры открыты!");
-      haptic("win");
-      loadMe().catch(() => {
-      });
-    } else showToast("Отправили администратору — он сверит пополнение с CRM");
-    renderGames();
-  } catch (e) {
-    showToast(e.message);
-    btn.disabled = false;
-  }
-});
+$("topup-check").addEventListener("click", () => showPanel("cashback"));
 function gameHint(g, word) {
   if (g.left > 0) return "Бесплатных ".concat(word, " сегодня: ").concat(g.left, " из ").concat(g.total);
   return g.next_free_in ? "Следующая бесплатная попытка через ".concat(g.next_free_in) : "Бесплатные попытки закончились";
@@ -2198,6 +2379,7 @@ function renderMe() {
   $("phone-card").classList.toggle("hidden", !!me.phone_verified);
   renderTierBonus();
   if (typeof renderSmokeTile === "function") renderSmokeTile();
+  if (typeof renderCashbackTile === "function") renderCashbackTile();
   const noTier = me.tier === "none";
   $("tier-name").textContent = noTier ? "Без статуса" : "".concat(me.tier_label, ", кэшбэк ").concat(me.cashback_percent, "%");
   const fill = $("progress-fill");
@@ -2218,6 +2400,7 @@ function renderMe() {
   }
   const ref = me.referral || {};
   $("invite-card").classList.toggle("hidden", !ref.link || !(ref.bonus || ref.activation_bonus));
+  pairTiles();
   if (ref.link) $("invite-sub").textContent = "+".concat(ref.bonus, " за друга") + (ref.invited ? ", позвал ".concat(ref.invited) : "");
   document.querySelectorAll(".ref-b1").forEach((e) => e.textContent = ref.bonus || 0);
   document.querySelectorAll(".ref-b2").forEach((e) => e.textContent = ref.activation_bonus || 0);
@@ -2229,10 +2412,6 @@ function renderMe() {
   if (document.activeElement !== $("prof-nick-input")) $("prof-nick-input").value = me.nickname || "";
   if (!$("b-name").value) $("b-name").value = me.nickname ? (tgUser == null ? void 0 : tgUser.first_name) || me.name || "" : (tgUser == null ? void 0 : tgUser.first_name) || me.name || "";
   if (!$("b-phone").value && me.phone) $("b-phone").value = me.phone;
-  if (me.dice_bonus_per_point) {
-    $("dice-tag").textContent = "×".concat(me.dice_bonus_per_point, " за очко");
-    $("row-dice-sub").textContent = "×".concat(me.dice_bonus_per_point, " за каждое очко");
-  }
   if (!$("w-name").value) $("w-name").value = (tgUser == null ? void 0 : tgUser.first_name) || me.name || "";
   $("w-phone").value = me.phone || "";
   const bc = me.bet_config;
@@ -3655,6 +3834,7 @@ document.querySelectorAll("[data-pk]").forEach((b) => b.addEventListener("click"
 function renderCheckin() {
   const c = me && me.checkin;
   $("ci-card").classList.toggle("hidden", !me || !me.phone_verified || !c);
+  pairTiles();
   if (!c) return;
   const visits = c.visits_month ? ", визитов в месяце: ".concat(c.visits_month) : "";
   if (c.today === "pending") {
@@ -4615,33 +4795,14 @@ function renderBigLock() {
   $("bl-title").textContent = "Баланс от ".concat(fmt(B.min), " колизов");
   $("bl-prog").textContent = "".concat(fmt(B.done), " из ").concat(fmt(B.need));
   $("bl-fill").style.width = Math.max(2, Math.min(100, B.done / Math.max(1, B.need) * 100)) + "%";
-  const btn = $("bl-receipt");
-  btn.disabled = B.receipt === "pending";
-  btn.textContent = B.receipt === "pending" ? "Чек у администратора" : "Сфотографировать чек";
-  $("bl-receipt-s").textContent = B.receipt === "pending" ? "Проверяем — после подтверждения откроется одно списание, бот пришлёт сообщение" : B.receipt === "rejected" ? "Прошлый чек не подтвердили — пришли фото свежего чека из COLIZEUM" : "Администратор проверит — и одно списание откроется";
 }
-$("bl-receipt").addEventListener("click", () => {
-  $("bl-file").value = "";
-  $("bl-file").click();
-});
-$("bl-file").addEventListener("change", async () => {
-  const f = $("bl-file").files && $("bl-file").files[0];
-  if (!f) return;
-  const btn = $("bl-receipt");
-  btn.disabled = true;
-  btn.textContent = "Отправляем…";
-  try {
-    const photo = await compressImage(f);
-    const r = await api("/api/withdraw/receipt", { initData, photo });
-    me.withdraw = r.withdraw;
-    haptic("win");
-    showToast("Чек отправлен администратору — после проверки откроется списание");
-  } catch (e) {
-    showToast(e.message && e.message.length > 12 ? e.message : "Не получилось отправить фото — попробуй ещё раз");
-  } finally {
-    renderBalance();
-  }
-});
+$("bl-receipt").addEventListener("click", () => showPanel("cashback"));
+function pairTiles() {
+  const a = $("ci-card"), b = $("invite-card");
+  const av = !a.classList.contains("hidden"), bv = !b.classList.contains("hidden");
+  a.classList.toggle("full", av && !bv);
+  b.classList.toggle("full", bv && !av);
+}
 (function edgeBlur() {
   let raf = 0;
   const upd = () => {
@@ -4659,6 +4820,90 @@ $("bl-file").addEventListener("change", async () => {
   setInterval(upd, 1200);
   upd();
 })();
+const cc = { info: null, photo: null };
+async function loadCashback() {
+  try {
+    cc.info = await api("/api/cashback", { initData });
+  } catch (e) {
+    showToast(e.message);
+    return;
+  }
+  renderCashback();
+}
+function renderCashbackTile() {
+  const c = me && me.cashback;
+  if (!c) return;
+  const t = c.pending ? "Чек на проверке — скоро начислим" : c.percent ? "Пополнил в клубе — получи ".concat(c.percent, "% колизами") : "Пополнил в клубе — пришли чек и открой игры";
+  $("tile-cash-sub").textContent = t;
+  if ($("cash-row-sub")) $("cash-row-sub").textContent = c.percent ? "".concat(c.percent, "% от пополнения колизами") : "главный способ получить колизы";
+}
+function ccCalc() {
+  const I = cc.info;
+  if (!I) return;
+  const a = parseInt($("cc-amount").value, 10) || 0;
+  $("cc-calc").innerHTML = !a ? "Укажи сумму — посчитаем кэшбэк" : a < I.min ? "Кэшбэк начисляется за пополнение от ".concat(fmt(I.min), " ₽") : I.percent ? "Получишь <b>".concat(fmt(Math.floor(a * I.percent / 100)), "</b> ").concat(koliz(Math.floor(a * I.percent / 100)), " — ").concat(I.percent, "% по статусу ").concat(escapeHtml(I.tier_label)) : "С текущим статусом кэшбэк 0%, но подтверждённый чек откроет бесплатные игры. Silver — от 10%";
+}
+function renderCashback() {
+  const I = cc.info;
+  if (!I) return;
+  $("cc-tier").textContent = I.tier_label;
+  $("cc-pct").textContent = I.percent + "%";
+  setHTML($("cc-table"), I.table.map((t) => '<div class="'.concat(t.tier === I.tier ? "on" : "", '">').concat(escapeHtml(t.label), "<b>").concat(t.percent, "%</b></div>")).join(""));
+  if (!$("cc-phone").value) $("cc-phone").value = I.phone || "";
+  $("cc-submit").disabled = I.pending;
+  $("cc-submit").textContent = I.pending ? "Предыдущий чек на проверке" : "Отправить на проверку";
+  $("cc-hist-h").classList.toggle("hidden", !I.history.length);
+  setHTML($("cc-hist"), I.history.map((h) => '<div class="cc-h"><div>'.concat(fmt(h.amount), " ₽ → ").concat(h.status === "rejected" ? "—" : "+" + fmt(h.cashback), "<small>№").concat(h.id, " · ").concat(escapeHtml(h.date), '</small></div><em class="').concat(h.status, '">').concat(escapeHtml(h.status_label), "</em></div>")).join(""));
+  ccCalc();
+}
+$("cc-amount").addEventListener("input", ccCalc);
+$("cc-photo").addEventListener("click", () => {
+  $("cc-file").value = "";
+  $("cc-file").click();
+});
+$("cc-file").addEventListener("change", async () => {
+  const f = $("cc-file").files && $("cc-file").files[0];
+  if (!f) return;
+  try {
+    cc.photo = await compressImage(f);
+  } catch (e) {
+    showToast("Не получилось открыть фото — попробуй другое");
+    return;
+  }
+  $("cc-thumb").src = cc.photo;
+  $("cc-thumb").classList.remove("hidden");
+  $("cc-photo-l").textContent = "Фото прикреплено — нажми, чтобы заменить";
+  $("cc-photo").classList.add("has");
+});
+$("cc-submit").addEventListener("click", async () => {
+  if (!cc.photo) {
+    showToast("Прикрепи фото чека или скрин оплаты");
+    return;
+  }
+  const amount = parseInt($("cc-amount").value, 10);
+  if (!amount) {
+    showToast("Укажи сумму пополнения");
+    return;
+  }
+  const btn = $("cc-submit");
+  btn.disabled = true;
+  try {
+    cc.info = await api("/api/cashback/submit", { initData, photo: cc.photo, phone: $("cc-phone").value.trim(), amount });
+    cc.photo = null;
+    $("cc-thumb").classList.add("hidden");
+    $("cc-photo").classList.remove("has");
+    $("cc-photo-l").textContent = "Прикрепить фото чека или скрин оплаты";
+    $("cc-amount").value = "";
+    haptic("win");
+    showToast("Чек отправлен — кэшбэк придёт после проверки");
+    if (me && me.cashback) me.cashback.pending = true;
+    renderCashback();
+    renderCashbackTile();
+  } catch (e) {
+    showToast(e.message);
+    btn.disabled = false;
+  }
+});
 function renderTierBonus() {
   const t = me && me.tier_bonus, box = $("tier-bonus");
   if (!t) {
@@ -4820,11 +5065,11 @@ async function loadEvents() {
   setHTML($("ev-list"), ev.length ? ev.map((x) => '<div class="evc" id="evc-'.concat(x.id, '">').concat(evHead(x), '<div class="evc-body">\n      ').concat(x.img ? '<div class="evc-date"><b>'.concat(escapeHtml(x.date), "</b><span>").concat(escapeHtml(x.dow), ", ").concat(escapeHtml(x.time), "</span></div>") : "", '\n      <div class="evc-title">').concat(escapeHtml(x.title), "</div>").concat(x.description ? '<div class="evc-desc">'.concat(escapeHtml(x.description), "</div>") : "", '\n      <div class="tpost-row"><span class="hint" style="margin:0">').concat(x.going ? "Пойдут: ".concat(x.going) : "Будь первым", '</span>\n      <button class="').concat(x.i_go ? "secondary" : "primary", '" style="width:auto;padding:10px 18px" data-go-ev="').concat(x.id, '" data-on="').concat(x.i_go ? 1 : 0, '">').concat(x.i_go ? "Ты идёшь" : "Пойду", "</button></div></div></div>")).join("") : '<div class="card"><div class="empty-state">Скоро здесь появятся турниры и события клуба.</div></div>');
   const next = ev[0];
   $("tile-events-sub").textContent = next ? "".concat(next.date, ": ").concat(next.title) : "события клуба";
-  if (next && EV_ICONS[next.kind]) {
-    const ico = $("tile-events-ico");
-    ico.setAttribute("viewBox", "-2 -2 28 28");
-    ico.innerHTML = '<g fill="none" stroke="#f5e92e" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">'.concat(EV_ICONS[next.kind], "</g>");
-  }
+  const MON = ["ЯНВ", "ФЕВ", "МАР", "АПР", "МАЙ", "ИЮН", "ИЮЛ", "АВГ", "СЕН", "ОКТ", "НОЯ", "ДЕК"];
+  $("tile-ev-day").textContent = next ? next.date.split(".")[0] : "★";
+  $("tile-ev-mon").textContent = next ? MON[(+next.date.split(".")[1] || 1) - 1] : "СКОРО";
+  const k = next && EV_ICONS[next.kind] ? next.kind : null;
+  $("tile-ev-glyph").innerHTML = k ? '<g transform="translate(58 58)"><circle cx="12" cy="12" r="15" fill="'.concat(EV_COLORS[k], '"/><g fill="none" stroke="#141416" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">').concat(EV_ICONS[k], "</g></g>") : "";
 }
 $("ev-list").addEventListener("click", async (e) => {
   const b = e.target.closest("[data-go-ev]");
@@ -5067,7 +5312,7 @@ Promise.all([loadTiers(), loadMe()]).then(() => {
   if (battleParam && me) {
     bt.id = battleParam;
     showPanel("battle");
-  } else if (me && ["shop", "rating", "activities", "booking", "battle", "profile", "team", "events", "visits", "news", "smoke"].indexOf(qs.get("panel")) >= 0) {
+  } else if (me && ["shop", "rating", "activities", "booking", "battle", "profile", "team", "events", "visits", "news", "smoke", "cashback"].indexOf(qs.get("panel")) >= 0) {
     if (qs.get("panel") === "team" && qs.get("item")) tm.focus = +qs.get("item");
     showPanel(qs.get("panel"));
   }
