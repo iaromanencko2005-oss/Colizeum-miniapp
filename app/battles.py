@@ -90,6 +90,9 @@ def max_stake(db, b: Battle) -> int:
 def _take(db, client_id: int, amount: int) -> bool:
     updated = db.query(Client).filter(Client.id == client_id, func.coalesce(Client.balance, 0) >= amount).update(
         {Client.balance: func.coalesce(Client.balance, 0) - amount}, synchronize_session=False)
+    if updated == 1 and amount > 0:
+        from . import bonus_expiry
+        bonus_expiry.touch(db, client_id)   # ставка в батле продлевает срок колизов
     return updated == 1
 
 

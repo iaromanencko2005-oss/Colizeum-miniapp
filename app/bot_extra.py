@@ -17,8 +17,10 @@ from aiogram.types import (
 )
 
 from .database import SessionLocal
-from .models import Client, ShopOrder, CheckIn, normalize_phone
-from . import shop, checkin, group, referrals, access
+import json
+
+from .models import Client, ShopOrder, CheckIn, TierBonus, HookahOrder, HookahCall, WithdrawReceipt, normalize_phone
+from . import shop, checkin, group, referrals, access, tier_bonus, hookah, big_balance
 from .bot import is_admin, ADMIN_IDS, WEBAPP_URL, webapp_url
 
 logger = logging.getLogger("colizeum")
@@ -430,6 +432,250 @@ async def cmd_unlock(message: Message, command: CommandObject):
 @router.message(Command("lock"))
 async def cmd_lock(message: Message, command: CommandObject):
     await _set_games_access(message, command, False)
+
+
+# ---------- ежемесячный бонус уровня ----------
+
+def tier_bonus_markup(bid: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Начислил в CRM", callback_data=f"tb:ok:{bid}"),
+        InlineKeyboardButton(text="❌ Отклонить", callback_data=f"tb:no:{bid}"),
+    ]])
+
+
+def _tier_bonus_text(row: TierBonus, client: Client) -> str:
+    tg = f"@{client.tg_username}" if client.tg_username else f"id {client.tg_id}"
+    month = tier_bonus.MONTHS[int(row.month[5:]) - 1]
+    return (f"🎁 Бонус уровня {row.tier.capitalize()} за {month}: {fmt(row.amount)} колизов\n"
+            f"Гость: {guest_line(client)}\nTelegram: {tg}\n\n"
+            f"Начисли гостю {fmt(row.amount)} бонусов на карту в CRM и нажми «Начислил».")
+
+
+async def tier_bonus_notify(bot: Bot, row: TierBonus, client: Client):
+    await send_staff(bot, _tier_bonus_text(row, client), tier_bonus_markup(row.id))
+
+
+@router.callback_query(F.data.startswith("tb:"))
+async def cb_tier_bonus(callback: CallbackQuery):
+    if not can_manage(callback):
+        await callback.answer("Это кнопка для администратора", show_alert=True)
+        return
+    _, act, raw = (callback.data.split(":") + ["", ""])[:3]
+    if not raw.isdigit():
+        await callback.answer()
+        return
+    db = SessionLocal()
+    try:
+        row = tier_bonus.decide(db, int(raw), act == "ok", who(callback.from_user))
+        if row is None:
+            await callback.answer("По этой заявке уже приняли решение", show_alert=True)
+            return
+        c = db.get(Client, row.client_id)
+        c_tg, amount, ok = c.tg_id if c else None, row.amount, row.status == "done"
+    finally:
+        db.close()
+    await callback.answer("Готово")
+    base = (callback.message.text or "").split("\n\nНачисли гостю")[0]
+    await _edit(callback, base + (f"\n\n✅ Начислено — {who(callback.from_user)}" if ok else f"\n\n❌ Отклонено — {who(callback.from_user)}"))
+    if c_tg:
+        await tell(callback.bot, c_tg, f"🎁 Бонус уровня зачислен: {fmt(amount)} бонусов уже на твоей карте гостя COLIZEUM." if ok
+                   else "Бонус уровня в этом месяце не начислен — уточни у администратора на стойке.")
+
+
+@router.message(Command("bonuses"))
+async def cmd_bonuses(message: Message):
+    """Заявки на бонус уровня, по которым ещё не приняли решение."""
+    if not is_admin(message.from_user.id):
+        return
+    db = SessionLocal()
+    try:
+        rows = db.query(TierBonus).filter(TierBonus.status == "requested").order_by(TierBonus.id).limit(20).all()
+        month = tier_bonus.month_key()
+        done = db.query(TierBonus).filter(TierBonus.month == month, TierBonus.status == "done").all()
+        await message.answer(f"Бонусы уровня за этот месяц: начислено {len(done)} на {fmt(sum(r.amount for r in done))} колизов. "
+                             f"Ждут решения: {len(rows)}.")
+        for r in rows:
+            c = db.get(Client, r.client_id)
+            if c:
+                await message.answer(_tier_bonus_text(r, c), reply_markup=tier_bonus_markup(r.id))
+    finally:
+        db.close()
+
+
+# ---------- «Дымок»: заказы кальянов ----------
+
+def _hookah_text(o: HookahOrder, client: Client) -> str:
+    fl = json.loads(o.flavors)
+    tg = f"@{client.tg_username}" if client.tg_username else f"id {client.tg_id}"
+    return (f"💨 Кальян №{o.id} — к месту {o.seat}\n"
+            f"Гость: {guest_line(client)}, {tg}\n\n"
+            + (f"Микс: {o.mix_name}\n" if o.mix_name else "")
+            + "Вкусы: " + ", ".join(f"{x['name']} {x['share']}%" for x in fl) + "\n"
+            f"Крепость: {o.strength} из 10\n"
+            f"Холодок: {'да' if o.cooling else 'нет'}\n"
+            f"Подать: {hookah.serve_time(o)}"
+            + (f"\nКомментарий: {o.comment}" if o.comment else "")
+            + "\n\nПри подаче проверь возраст гостя.")
+
+
+def hookah_markup(o: HookahOrder) -> InlineKeyboardMarkup | None:
+    row = []
+    if o.status == "new":
+        row.append(InlineKeyboardButton(text="✅ Принял", callback_data=f"hk:acc:{o.id}"))
+    if o.status in ("new", "accepted"):
+        row.append(InlineKeyboardButton(text="💨 Подан", callback_data=f"hk:srv:{o.id}"))
+    return InlineKeyboardMarkup(inline_keyboard=[row]) if row else None
+
+
+async def hookah_notify(bot: Bot, o: HookahOrder, client: Client):
+    await send_staff(bot, _hookah_text(o, client), hookah_markup(o))
+
+
+async def hookah_call_notify(bot: Bot, o: HookahOrder, c: HookahCall, client: Client):
+    icon = {"coals": "🔥", "ice": "❄️", "pickup": "🧹"}.get(c.kind, "💨")
+    text = f"{icon} {o.seat} (кальян №{o.id}): гость просит {hookah.CALLS[c.kind]}\nГость: {guest_line(client)}"
+    markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Сделано", callback_data=f"hc:done:{c.id}")]])
+    await send_staff(bot, text, markup)
+
+
+@router.callback_query(F.data.startswith("hk:"))
+async def cb_hookah(callback: CallbackQuery):
+    if not can_manage(callback):
+        await callback.answer("Это кнопка для администратора", show_alert=True)
+        return
+    _, act, raw = (callback.data.split(":") + ["", ""])[:3]
+    if not raw.isdigit() or act not in ("acc", "srv"):
+        await callback.answer()
+        return
+    db = SessionLocal()
+    try:
+        o = hookah.staff_set(db, int(raw), "accepted" if act == "acc" else "served")
+        if o is None:
+            await callback.answer("Статус уже обновлён", show_alert=True)
+            return
+        o_id, o_tg, o_status, markup = o.id, o.tg_id, o.status, hookah_markup(o)
+    finally:
+        db.close()
+    await callback.answer("Готово")
+    base = (callback.message.text or "").split("\n\n✅")[0].split("\n\n💨 Подан")[0]
+    mark = (f"\n\n✅ Принял — {who(callback.from_user)}" if o_status == "accepted"
+            else f"\n\n💨 Подан в {msk(datetime.utcnow())} — {who(callback.from_user)}")
+    try:
+        await callback.message.edit_text(base + mark, reply_markup=markup)
+    except Exception as e:  # noqa: BLE001
+        logger.info("Не удалось обновить сообщение: %s", e)
+    if o_status == "served":
+        await tell(callback.bot, o_tg, f"💨 Кальян №{o_id} подан. Нужно поменять угли или добавить холодок — "
+                                        "нажми кнопку в разделе «Дымок».", cabinet=True)
+
+
+@router.callback_query(F.data.startswith("hc:"))
+async def cb_hookah_call(callback: CallbackQuery):
+    if not can_manage(callback):
+        await callback.answer("Это кнопка для администратора", show_alert=True)
+        return
+    raw = (callback.data.split(":") + ["", "", ""])[2]
+    if not raw.isdigit():
+        await callback.answer()
+        return
+    db = SessionLocal()
+    try:
+        c = db.get(HookahCall, int(raw))
+        if c is None or c.done:
+            await callback.answer("Уже отмечено", show_alert=True)
+            return
+        c.done = True
+        db.commit()
+    finally:
+        db.close()
+    await callback.answer("Готово")
+    await _edit(callback, (callback.message.text or "") + f"\n\n✅ Сделано — {who(callback.from_user)}")
+
+
+@router.message(Command("hookah"))
+async def cmd_hookah(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+    db = SessionLocal()
+    try:
+        off = hookah.inactive_ids(db)
+        since = datetime.utcnow() - timedelta(days=30)
+        n = db.query(HookahOrder).filter(HookahOrder.created_at >= since).count()
+    finally:
+        db.close()
+    from . import hookah_data as hd
+    lines = [f"Табаки «Дымка» (заказов за 30 дней: {n}):", ""]
+    for f in hd.FLAVORS:
+        lines.append(("⛔️ " if f["id"] in off else "✅ ") + f["name"])
+    lines += ["", "Закончился вкус: /hookah_off чизкейк", "Снова есть: /hookah_on чизкейк"]
+    await message.answer("\n".join(lines))
+
+
+async def _hookah_stock(message: Message, command: CommandObject, active: bool):
+    if not is_admin(message.from_user.id):
+        return
+    db = SessionLocal()
+    try:
+        f = hookah.set_stock(db, command.args or "", active)
+    finally:
+        db.close()
+    if f is None:
+        await message.answer(f"Не нашёл такой табак. Формат: /hookah_{'on' if active else 'off'} чизкейк (список — /hookah)")
+        return
+    await message.answer(f"«{f['name']}» — {'снова в списке' if active else 'скрыт из списка: закончился'}.")
+
+
+@router.message(Command("hookah_off"))
+async def cmd_hookah_off(message: Message, command: CommandObject):
+    await _hookah_stock(message, command, False)
+
+
+@router.message(Command("hookah_on"))
+async def cmd_hookah_on(message: Message, command: CommandObject):
+    await _hookah_stock(message, command, True)
+
+
+# ---------- чек о пополнении для списания при большом балансе ----------
+
+def receipt_markup(rid: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Пополнение есть", callback_data=f"wr:ok:{rid}"),
+        InlineKeyboardButton(text="❌ Отклонить", callback_data=f"wr:no:{rid}"),
+    ]])
+
+
+async def receipt_notify(bot: Bot, r: WithdrawReceipt, client: Client, photo: bytes) -> str | None:
+    text = (f"🧾 Чек о пополнении — для списания колизов\n"
+            f"Гость: {guest_line(client)}\nБаланс в приложении: {fmt(client.balance or 0)} колизов\n\n"
+            f"Проверь, что чек из COLIZEUM и пополнение свежее. Подтвердишь — гостю откроется одно списание "
+            f"(до {fmt(big_balance.RECEIPT_HOURS)} ч).")
+    return await send_staff(bot, text, receipt_markup(r.id), photo=photo)
+
+
+@router.callback_query(F.data.startswith("wr:"))
+async def cb_receipt(callback: CallbackQuery):
+    if not can_manage(callback):
+        await callback.answer("Это кнопка для администратора", show_alert=True)
+        return
+    _, act, raw = (callback.data.split(":") + ["", ""])[:3]
+    if not raw.isdigit():
+        await callback.answer()
+        return
+    db = SessionLocal()
+    try:
+        r = big_balance.decide(db, int(raw), act == "ok", who(callback.from_user))
+        if r is None:
+            await callback.answer("По этому чеку уже приняли решение", show_alert=True)
+            return
+        r_tg, ok = r.tg_id, r.status == "approved"
+    finally:
+        db.close()
+    await callback.answer("Готово")
+    base = (callback.message.caption or callback.message.text or "").split("\n\nПроверь, что чек")[0]
+    await _edit(callback, base + (f"\n\n✅ Подтверждено — {who(callback.from_user)}" if ok else f"\n\n❌ Отклонено — {who(callback.from_user)}"))
+    await tell(callback.bot, r_tg, "✅ Чек подтверждён — списание колизов открыто. Отправь заявку в кабинете." if ok
+               else "Чек о пополнении не подтвердили. Пришли фото свежего чека из COLIZEUM — или сыграй на сумму баланса.",
+               cabinet=True)
 
 
 @router.message(Command("chatid"))

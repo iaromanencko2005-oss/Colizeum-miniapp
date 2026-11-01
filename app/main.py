@@ -51,7 +51,7 @@ from . import battles
 from . import rating
 from . import shop, checkin, group, bonus_expiry, social
 from .models import TeamPost, ClubEvent, EventGoing
-from . import bot_extra, bot_social, access, news
+from . import bot_extra, bot_social, access, news, tier_bonus, hookah, big_balance
 from .models import ClubNews
 
 logging.basicConfig(level=logging.INFO)
@@ -321,6 +321,8 @@ def change_balance(db: Session, client: Client, delta: int, require_at_least: in
         {Client.balance: func.coalesce(Client.balance, 0) + delta},
         synchronize_session=False,
     )
+    if updated == 1 and delta < 0:
+        bonus_expiry.touch(db, client.id)   # трата (ставка, магазин, списание) продлевает срок колизов
     return updated == 1
 
 
@@ -391,6 +393,10 @@ def withdraw_info(db: Session, client: Client) -> dict:
                   + (f" — следующий раз через {next_in}" if next_in else ""))
     elif balance < WITHDRAW_MIN:
         reason = f"Списать можно от {WITHDRAW_MIN} колизов"
+    big = big_balance.state(db, client) if client.phone_verified else None
+    if reason is None and big and big["locked"]:
+        reason = (f"При балансе от {big['min']:,} колизов сначала сыграй на сумму баланса (осталось {big['left']:,}) "
+                  f"или пришли чек о пополнении в клубе").replace(",", " ")
 
     return {
         "available": reason is None,
@@ -403,6 +409,7 @@ def withdraw_info(db: Session, client: Client) -> dict:
         "window_label": window_label(),
         "next_free_in": next_in,
         "spent_kind": spent_kind,
+        "big": big,
     }
 
 
@@ -454,6 +461,7 @@ def client_to_dict(db: Session, client: Client) -> dict:
         "remaining_to_next_tier": remaining,
         "games": games,
         "games_lock": access.games_lock(db, client),
+        "tier_bonus": tier_bonus.info(db, client),
         "dice_bonus_per_point": DICE_BONUS_PER_POINT,
         "bet_config": {
             "house_edge_percent": BET_HOUSE_EDGE_PERCENT,
@@ -1155,6 +1163,7 @@ async def api_withdraw(payload: WithdrawPayload, db: Session = Depends(get_db)):
 
         phone = client.phone
         client.last_withdraw_at = datetime.utcnow()
+        big_balance.consume(client)
         username = tg_user.get("username")
         db.add(Withdrawal(
             tg_id=client.tg_id, tg_name=tg_user.get("first_name"), tg_username=username,
@@ -1532,6 +1541,124 @@ def api_event_img(event_id: int, db: Session = Depends(get_db)):
     return Response(content=ev.image, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=604800"})
 
 
+# ---------- чек о пополнении: открывает списание при большом балансе ----------
+
+@app.post("/api/withdraw/receipt")
+async def api_withdraw_receipt(payload: CheckInPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    require_verified(client)
+    try:
+        big_balance.can_send_receipt(db, client)
+    except big_balance.ReceiptError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    raw = payload.photo.split(",", 1)[-1]
+    try:
+        photo = base64.b64decode(raw, validate=False)
+    except (ValueError, binascii.Error):
+        raise HTTPException(status_code=400, detail="Не получилось прочитать фото — попробуй другое")
+    if len(photo) < 2000 or len(photo) > 6_000_000:
+        raise HTTPException(status_code=400, detail="Фото не подошло — сфотографируй чек ещё раз")
+    if _bot_instance is None:
+        raise HTTPException(status_code=503, detail="Сейчас не получается отправить чек — попробуй позже")
+    r = big_balance.create(db, client)
+    try:
+        file_id = await bot_extra.receipt_notify(_bot_instance, r, client, photo)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Чек о пополнении не отправлен: %s", e)
+        file_id = None
+    if not file_id:
+        db.delete(r)
+        db.commit()
+        raise HTTPException(status_code=503, detail="Не получилось отправить чек администратору — попробуй ещё раз")
+    r.photo_file_id = file_id
+    db.commit()
+    return {"withdraw": withdraw_info(db, client)}
+
+
+# ---------- ежемесячный бонус уровня ----------
+
+@app.post("/api/tier_bonus/claim")
+async def api_tier_bonus_claim(payload: InitDataPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    try:
+        row = tier_bonus.claim(db, client)
+    except tier_bonus.TierBonusError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if _bot_instance is not None:
+        await bot_extra.tier_bonus_notify(_bot_instance, row, client)
+    return {"tier_bonus": tier_bonus.info(db, client)}
+
+
+# ---------- «Дымок»: заказ кальяна ----------
+
+class HookahIdsPayload(BaseModel):
+    initData: str
+    ids: list[str]
+
+
+class HookahOrderPayload(BaseModel):
+    initData: str
+    ids: list[str]
+    strength: int
+    cooling: bool = False
+    seat: str = ""
+    when: str = "now"
+    comment: str = ""
+
+
+class HookahCallPayload(BaseModel):
+    initData: str
+    order_id: int
+    kind: str
+
+
+@app.post("/api/hookah/menu")
+def api_hookah_menu(payload: InitDataPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    return hookah.menu(db, client)
+
+
+@app.post("/api/hookah/age")
+def api_hookah_age(payload: InitDataPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    hookah.confirm_age(db, client)
+    return hookah.menu(db, client)
+
+
+@app.post("/api/hookah/describe")
+def api_hookah_describe(payload: HookahIdsPayload, db: Session = Depends(get_db)):
+    consented_client(db, verify(payload.initData))
+    try:
+        return hookah.describe(db, payload.ids)
+    except hookah.HookahError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/hookah/order")
+async def api_hookah_order(payload: HookahOrderPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    try:
+        o = hookah.create_order(db, client, payload.ids, payload.strength, payload.cooling, payload.seat,
+                                payload.when, payload.comment)
+    except hookah.HookahError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if _bot_instance is not None:
+        await bot_extra.hookah_notify(_bot_instance, o, client)
+    return {"order": hookah.order_view(o), "menu": hookah.menu(db, client)}
+
+
+@app.post("/api/hookah/call")
+async def api_hookah_call(payload: HookahCallPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    try:
+        o, c = hookah.call(db, client, payload.order_id, payload.kind)
+    except hookah.HookahError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if _bot_instance is not None:
+        await bot_extra.hookah_call_notify(_bot_instance, o, c, client)
+    return hookah.menu(db, client)
+
+
 # ---------- новости клуба с реакциями ----------
 
 class NewsReactPayload(BaseModel):
@@ -1746,9 +1873,10 @@ async def expiry_tick():
     for w in warn:
         left = w["expires_at"] - datetime.utcnow()
         await bot_extra.tell(_bot_instance, w["tg_id"],
-                             f"⏳ Через {format_wait(left)} сгорят {w['amount']:,} колизов на балансе COLIZEUM.\n"
-                             f"Колизы действуют сутки с момента начисления. Успей потратить: купить напиток или батончик "
-                             f"в магазине приложения или списать до {WITHDRAW_LIMIT} колизов на карту гостя.".replace(",", " "),
+                             (f"⏳ Через {format_wait(left)} сгорят {w['amount']:,} колизов на балансе COLIZEUM — "
+                              f"ты почти сутки ими не пользовался.\n"
+                              f"Любая трата продлит срок ещё на сутки: покупка в магазине приложения, списание "
+                              f"на карту гостя или ставка в игре.").replace(",", " "),
                              cabinet=True)
     for oid, tg_id, total, refunded in expired_info:
         await bot_extra.tell(_bot_instance, tg_id, f"Заказ №{oid} не забрали вовремя. "

@@ -1,11 +1,11 @@
 """
 Колизы действуют сутки.
 
-Как считается: как только на пустом балансе появляются колизы (выигрыш, подарок,
-приглашение друга, чек), запускается таймер на BONUS_TTL_HOURS (24 часа). Новые
-начисления его НЕ продлевают. Когда время вышло — всё, что осталось на балансе,
-сгорает. Потратить можно одним способом в сутки: списать на карту гостя или
-купить в магазине.
+Как считается: колизы сгорают, только если гость BONUS_TTL_HOURS (24 часа) ничего
+не тратит. Таймер запускается, когда на пустом балансе появляются колизы, и
+продлевается на сутки любой тратой: покупкой в магазине, заявкой на списание,
+ставкой в игре или батле (touch()). Новые начисления (выигрыши, подарки) его не
+продлевают. Когда время вышло — всё, что осталось на балансе, сгорает.
 
 За BONUS_WARN_HOURS (3 часа) до сгорания бот напоминает гостю — повод зайти в клуб.
 """
@@ -21,6 +21,15 @@ WARN_MIN_BALANCE = int(os.getenv("BONUS_WARN_MIN", "50"))     # о мелочи 
 
 def enabled() -> bool:
     return BONUS_TTL_HOURS > 0
+
+
+def touch(db, client_id: int, now: datetime | None = None) -> None:
+    """Гость потратил колизы — срок продлевается ещё на сутки (коммит — на вызывающем)."""
+    if not enabled():
+        return
+    db.query(Client).filter(Client.id == client_id).update(
+        {Client.bonus_expires_at: (now or datetime.utcnow()) + timedelta(hours=BONUS_TTL_HOURS), Client.bonus_warned: False},
+        synchronize_session=False)
 
 
 def deadline_for(client: Client, now: datetime | None = None) -> datetime | None:

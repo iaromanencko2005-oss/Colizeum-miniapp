@@ -103,6 +103,8 @@ class Client(Base):
     games_locked = Column(Boolean, default=False)      # админ закрыл вручную (/lock) — CRM не открывает
     topup_check_at = Column(DateTime, nullable=True)   # когда гость последний раз просил проверку
     topup_check_state = Column(String, nullable=True)  # pending | declined | approved
+    age_confirmed_at = Column(DateTime, nullable=True)  # подтвердил 18+ для раздела «Дымок»
+    withdraw_unlocked_until = Column(DateTime, nullable=True)  # чек о пополнении одобрен — одно списание при большом балансе
 
 
 def topup_key(client) -> str | None:
@@ -564,3 +566,73 @@ class NewsReaction(Base):
     client_id = Column(Integer, primary_key=True)
     value = Column(Integer, nullable=False)                    # 1 — рад(а), -1 — не интересно
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class TierBonus(Base):
+    """Ежемесячный бонус уровня: Premium/Gold/Silver раз в месяц забирают колизы на карту гостя."""
+    __tablename__ = "tier_bonuses"
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, index=True, nullable=False)
+    phone_normalized = Column(String, index=True, nullable=True)
+    month = Column(String, index=True, nullable=False)        # «2026-11» по Москве
+    tier = Column(String, nullable=False)
+    amount = Column(Integer, nullable=False)
+    status = Column(String, default="requested")              # requested | done | declined
+    decided_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    decided_at = Column(DateTime, nullable=True)
+
+
+class HookahOrder(Base):
+    """Заказ кальяна из раздела «Дымок»."""
+    __tablename__ = "hookah_orders"
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, index=True, nullable=False)
+    tg_id = Column(BigInteger, index=True, nullable=False)
+    flavors = Column(Text, nullable=False)             # JSON: [{"id", "name", "share"}]
+    mix_name = Column(String, nullable=True)
+    strength = Column(Integer, nullable=False)
+    cooling = Column(Boolean, default=False)
+    seat = Column(String, nullable=True)
+    serve_when = Column(String, default="now")          # now | 15 | 30
+    comment = Column(String, nullable=True)
+    status = Column(String, default="new", index=True)  # new | accepted | served | closed | cancelled
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    accepted_at = Column(DateTime, nullable=True)
+    served_at = Column(DateTime, nullable=True)
+    closed_at = Column(DateTime, nullable=True)
+
+
+class HookahCall(Base):
+    """Вызов кальянщика: поменять угли, добавить холодок, забрать кальян."""
+    __tablename__ = "hookah_calls"
+
+    id = Column(Integer, primary_key=True)
+    order_id = Column(Integer, index=True, nullable=False)
+    kind = Column(String, nullable=False)               # coals | ice | pickup
+    done = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class HookahStock(Base):
+    """Наличие табака: админ скрывает закончившийся вкус командой /hookah_off."""
+    __tablename__ = "hookah_stock"
+
+    flavor_id = Column(String, primary_key=True)
+    active = Column(Boolean, default=True)
+
+
+class WithdrawReceipt(Base):
+    """Чек о пополнении в клубе: при большом балансе открывает одно списание."""
+    __tablename__ = "withdraw_receipts"
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, index=True, nullable=False)
+    tg_id = Column(BigInteger, index=True, nullable=False)
+    photo_file_id = Column(String, nullable=True)
+    status = Column(String, default="pending")          # pending | approved | rejected
+    decided_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    decided_at = Column(DateTime, nullable=True)

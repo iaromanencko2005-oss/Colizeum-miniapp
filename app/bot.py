@@ -199,7 +199,7 @@ async def cmd_start(message: Message, command: CommandObject):
     _remember_username(message.from_user)
     # Ссылки из группы: заявка тиммейтов, событие афиши — сразу открываем нужный раздел
     for prefix, panel, title in (("team_", "team", "Открыть заявку"), ("event_", "events", "Открыть афишу"),
-                                 ("news_", "news", "Открыть новость")):
+                                 ("news_", "news", "Открыть новость"), ("smoke_", "smoke", "Открыть «Дымок»")):
         if arg.startswith(prefix) and arg[len(prefix):].isdigit():
             await message.answer("Жми, чтобы открыть в приложении:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(text=title, web_app=WebAppInfo(url=webapp_url(
@@ -1257,7 +1257,8 @@ async def cmd_admin(message: Message):
         "Бесплатные игры (только после пополнения)\n"
         "Заявки «Проверить пополнение» приходят в чат персонала с кнопками\n"
         "/unlock +7… — открыть вручную, /lock +7… — закрыть\n\n"
-        "Колизы\n"
+        "Колизы (сгорают, только если сутки нет трат)\n"
+        "При балансе от 1000 списание — после игр на сумму баланса или чека о пополнении: чеки приходят в чат персонала\n"
         "/add_bonus +7… 150 — начислить в приложении\n"
         "/spend +7… 150 — списать в приложении\n\n"
         "Магазин\n"
@@ -1265,6 +1266,11 @@ async def cmd_admin(message: Message):
         "/shop_off monster, /shop_on monster — скрыть / вернуть товар (или вкус: /shop_off burn гуава)\n"
         "/orders — заказы, которые ещё не выданы\n\n"
 
+        "Дымок (кальяны)\n"
+        "Заказы приходят в чат персонала с кнопками «Принял» и «Подан»\n"
+        "/hookah — табаки, /hookah_off чизкейк — закончился, /hookah_on чизкейк — снова есть\n\n"
+        "Бонус уровня (раз в месяц)\n"
+        "Заявки приходят в чат персонала, /bonuses — кто ещё ждёт\n\n"
         "Новости клуба\n"
         "Фото с подписью /news Заголовок | Текст — новость с реакциями гостей\n"
         "/news_list — новости и реакции, публикация в группе и удаление\n\n"
