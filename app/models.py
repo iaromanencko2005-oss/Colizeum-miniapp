@@ -655,3 +655,30 @@ class CashbackClaim(Base):
     decided_by = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     decided_at = Column(DateTime, nullable=True)
+
+
+class PcHelp(Base):
+    """«Помощь у ПК»: гость зовёт администратора к месту — не включается ПК, лагает, гарнитура и т. д."""
+    __tablename__ = "pc_help"
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, index=True, nullable=False)
+    tg_id = Column(BigInteger, index=True)
+    seat = Column(String, nullable=False)
+    kind = Column(String, nullable=False)
+    comment = Column(String, nullable=True)
+    status = Column(String, default="new", index=True)        # new | going | done
+    taken_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    taken_at = Column(DateTime, nullable=True)
+    done_at = Column(DateTime, nullable=True)
+
+
+class GameRequest(Base):
+    """Гость просит установить игру, которой нет в клубе."""
+    __tablename__ = "game_requests"
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, index=True, nullable=False)
+    title = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)

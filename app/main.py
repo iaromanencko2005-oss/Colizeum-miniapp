@@ -51,7 +51,7 @@ from . import battles
 from . import rating
 from . import shop, checkin, group, bonus_expiry, social
 from .models import TeamPost, ClubEvent, EventGoing
-from . import bot_extra, bot_social, access, news, tier_bonus, hookah, big_balance, cashback
+from . import bot_extra, bot_social, access, news, tier_bonus, hookah, big_balance, cashback, club
 from .models import ClubNews
 
 logging.basicConfig(level=logging.INFO)
@@ -1704,6 +1704,59 @@ async def api_hookah_call(payload: HookahCallPayload, db: Session = Depends(get_
     if _bot_instance is not None:
         await bot_extra.hookah_call_notify(_bot_instance, o, c, client)
     return hookah.menu(db, client)
+
+
+# ---------- разделы клуба: помощь у ПК, игры в клубе ----------
+
+class PcHelpPayload(BaseModel):
+    initData: str
+    seat: str
+    kind: str
+    comment: str = ""
+
+
+class GameRequestPayload(BaseModel):
+    initData: str
+    title: str
+
+
+@app.post("/api/club")
+def api_club(payload: InitDataPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    return club.info(db, client)
+
+
+@app.post("/api/club/help")
+async def api_club_help(payload: PcHelpPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    try:
+        h = club.create_help(db, client, payload.seat, payload.kind, payload.comment)
+    except club.ClubError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if _bot_instance is not None:
+        await bot_extra.pc_help_notify(_bot_instance, h, client)
+    return club.info(db, client)
+
+
+@app.post("/api/club/help/close")
+async def api_club_help_close(payload: InitDataPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    h = club.close_help(db, client)
+    if h is not None and _bot_instance is not None:
+        await bot_extra.pc_help_closed_by_guest(_bot_instance, h, client)
+    return club.info(db, client)
+
+
+@app.post("/api/club/game_request")
+async def api_club_game_request(payload: GameRequestPayload, db: Session = Depends(get_db)):
+    client = consented_client(db, verify(payload.initData))
+    try:
+        r = club.request_game(db, client, payload.title)
+    except club.ClubError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if _bot_instance is not None:
+        await bot_extra.game_request_notify(_bot_instance, r, client)
+    return {"ok": True}
 
 
 # ---------- новости клуба с реакциями ----------

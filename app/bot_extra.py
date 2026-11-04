@@ -19,8 +19,8 @@ from aiogram.types import (
 from .database import SessionLocal
 import json
 
-from .models import Client, ShopOrder, CheckIn, TierBonus, HookahOrder, HookahCall, WithdrawReceipt, CashbackClaim, TIER_LABELS, normalize_phone
-from . import shop, checkin, group, referrals, access, tier_bonus, hookah, big_balance, cashback
+from .models import Client, ShopOrder, CheckIn, TierBonus, HookahOrder, HookahCall, WithdrawReceipt, CashbackClaim, PcHelp, TIER_LABELS, normalize_phone
+from . import shop, checkin, group, referrals, access, tier_bonus, hookah, big_balance, cashback, club
 from .bot import is_admin, ADMIN_IDS, WEBAPP_URL, webapp_url
 
 logger = logging.getLogger("colizeum")
@@ -810,3 +810,67 @@ async def notify_activations(bot: Bot, paid: list[dict]):
     for p in paid:
         await tell(bot, p["tg_id"], f"💸 {p['friend']} пополнил(а) счёт в COLIZEUM — тебе +{p['amount']} колизов "
                                     "за приглашённого друга! Пригласить ещё: /bonus")
+
+
+# ---------- помощь у ПК ----------
+
+PC_HELP_ICON = {"power": "🔌", "lag": "🐢", "gear": "🎧", "account": "🔑", "install": "💿", "time": "⏱", "other": "🛠"}
+
+
+def pc_help_markup(h: PcHelp):
+    row = []
+    if h.status == "new":
+        row.append(InlineKeyboardButton(text="🏃 Иду", callback_data=f"ph:go:{h.id}"))
+    if h.status in ("new", "going"):
+        row.append(InlineKeyboardButton(text="✅ Решено", callback_data=f"ph:done:{h.id}"))
+    return InlineKeyboardMarkup(inline_keyboard=[row]) if row else None
+
+
+async def pc_help_notify(bot: Bot, h: PcHelp, client: Client):
+    icon = PC_HELP_ICON.get(h.kind, "🛠")
+    text = (f"{icon} Помощь у ПК — {h.seat}\n"
+            f"Проблема: {club.KINDS.get(h.kind, h.kind)}"
+            + (f"\nКомментарий: {h.comment}" if h.comment else "")
+            + f"\nГость: {guest_line(client)}")
+    await send_staff(bot, text, pc_help_markup(h))
+
+
+async def pc_help_closed_by_guest(bot: Bot, h: PcHelp, client: Client):
+    await send_staff(bot, f"👌 {h.seat}: гость отметил, что всё решилось (заявка №{h.id})")
+
+
+async def game_request_notify(bot: Bot, r, client: Client):
+    await send_staff(bot, f"💿 Гость просит игру: {r.title}\nГость: {guest_line(client)}")
+
+
+@router.callback_query(F.data.startswith("ph:"))
+async def cb_pc_help(callback: CallbackQuery):
+    if not can_manage(callback):
+        await callback.answer("Это кнопка для администратора", show_alert=True)
+        return
+    _, act, raw = (callback.data.split(":") + ["", ""])[:3]
+    if not raw.isdigit() or act not in ("go", "done"):
+        await callback.answer()
+        return
+    db = SessionLocal()
+    try:
+        h = club.staff_set(db, int(raw), "going" if act == "go" else "done", who(callback.from_user))
+        if h is None:
+            await callback.answer("Заявка уже обновлена", show_alert=True)
+            return
+        h_tg, h_seat, h_status, markup = h.tg_id, h.seat, h.status, pc_help_markup(h)
+    finally:
+        db.close()
+    await callback.answer("Готово")
+    base = (callback.message.text or "").split("\n\n🏃")[0].split("\n\n✅")[0]
+    mark = (f"\n\n🏃 Идёт — {who(callback.from_user)}" if h_status == "going"
+            else f"\n\n✅ Решено в {msk(datetime.utcnow())} — {who(callback.from_user)}")
+    try:
+        await callback.message.edit_text(base + mark, reply_markup=markup)
+    except Exception as e:  # noqa: BLE001
+        logger.info("Не удалось обновить сообщение: %s", e)
+    if h_tg and h_status == "going":
+        try:
+            await callback.bot.send_message(h_tg, f"🏃 Администратор идёт к тебе — {h_seat}. Уже рядом!")
+        except Exception as e:  # noqa: BLE001
+            logger.info("Не удалось написать гостю: %s", e)
