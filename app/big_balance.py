@@ -1,7 +1,8 @@
 """
 Списание при большом балансе.
 
-Колизы больше не сгорают, пока гость ими пользуется, поэтому баланс может расти.
+С 04.11 по умолчанию выключено (WITHDRAW_BIG_BALANCE=0): колизы и так сохраняются, только если
+за сутки отыгран весь баланс. Чтобы вернуть правило, задайте WITHDRAW_BIG_BALANCE=1000.
 Чтобы его не выводили систематически, при балансе от BIG_BALANCE (по умолчанию 1000)
 списание открывается одним из двух способов:
   • сыграть на сумму баланса — сумма ставок в играх и батлах с прошлого списания
@@ -17,7 +18,7 @@ from sqlalchemy import func, or_
 
 from .models import Client, GamePlay, Withdrawal, WithdrawReceipt
 
-BIG_BALANCE = int(os.getenv("WITHDRAW_BIG_BALANCE", "1000"))
+BIG_BALANCE = int(os.getenv("WITHDRAW_BIG_BALANCE", "0"))   # 04.11: выключено — его заменил отыгрыш баланса (bonus_expiry); вернуть — задать 1000
 RECEIPT_HOURS = int(os.getenv("WITHDRAW_RECEIPT_HOURS", "48"))
 
 

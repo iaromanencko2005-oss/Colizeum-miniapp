@@ -1483,6 +1483,21 @@
   @keyframes pwOn { from { opacity: 0; transform: scaleY(.2); } }
   .zn-go { width: 100%; border: 0; border-radius: 16px; padding: 14px; font: 700 15px "Geologica"; cursor: pointer; background: var(--zc); color: #000; position: relative; }
   @media (prefers-reduced-motion: reduce) { .intro { display: none !important; } }
+
+  /* отыгрыш баланса */
+  #burn-line { cursor: pointer; }
+  .burn.saved svg { animation: none; }
+  .wg { background: linear-gradient(150deg, #2a1d08, #141414 70%); border-radius: 22px; padding: 14px 16px; margin: 10px 0 14px; box-shadow: inset 0 0 0 1.5px rgba(255,159,28,.35); }
+  .wg.ok { background: linear-gradient(150deg, #0d2417, #141414 70%); box-shadow: inset 0 0 0 1.5px rgba(61,220,132,.35); }
+  .wg-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .wg-top b { font-size: 14.5px; font-weight: 700; }
+  .wg-top span { font: 700 13px "Unbounded"; color: #ffb547; white-space: nowrap; }
+  .wg.ok .wg-top span { color: #8ff0b9; }
+  .wg-bar { height: 8px; border-radius: 6px; background: #2a2a2e; margin: 11px 0 9px; overflow: hidden; }
+  .wg-bar i { display: block; height: 100%; width: 0; border-radius: 6px; background: linear-gradient(90deg, #ff9f1c, #F5E92E); transition: width .6s ease; }
+  .wg.ok .wg-bar i { background: linear-gradient(90deg, #3ddc84, #b6f5cf); }
+  .wg-sub { font-size: 12.5px; color: #b9bcc4; line-height: 1.4; }
+  .wg-sub b { color: #fff; }
 </style>
 </head>
 <body>
@@ -1911,6 +1926,11 @@
   <div class="title">Игры</div>
   <div class="lead">Бесплатные — раз в сутки. Остальные на колизы.</div>
   <button class="cash-row" onclick="showPanel('cashback')"><div><b>Кэшбэк за пополнение</b><small id="cash-row-sub">главный способ получить колизы</small></div><span>Получить</span></button>
+  <div class="wg hidden" id="wager-card">
+    <div class="wg-top"><b id="wg-title">Отыграй баланс, чтобы сохранить колизы</b><span id="wg-time"></span></div>
+    <div class="wg-bar"><i id="wg-fill"></i></div>
+    <div class="wg-sub" id="wg-sub"></div>
+  </div>
   <div class="glock hidden" id="games-lock">
     <div class="glock-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="3"/><path d="M8 10.5V7.5a4 4 0 018 0v3"/><circle cx="12" cy="15.5" r="1.3" fill="currentColor" stroke="none"/></svg></div>
     <div class="glock-t" id="glock-title">Бесплатные игры — после пополнения</div>
@@ -4357,11 +4377,32 @@ function burnLeft() {
   return h > 0 ? "".concat(h, " ч ").concat(pad2(m % 60), " мин") : "".concat(m, " мин");
 }
 function renderBurn() {
-  const el = $("burn-line");
-  const show = !!(me && me.balance > 0 && me.bonus_expires_at);
+  const el = $("burn-line"), w = me && me.wager;
+  const show = !!(me && me.balance > 0 && me.bonus_expires_at && w);
   el.style.visibility = show ? "visible" : "hidden";
-  if (show) el.innerHTML = '<svg><use href="#i-flame"/></svg>Без трат сгорят через '.concat(escapeHtml(burnLeft().replace(/ \d+ мин$/, "")));
+  el.classList.toggle("saved", !!(w && w.saved));
+  if (show) el.innerHTML = w.saved ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Баланс отыгран' : '<svg><use href="#i-flame"/></svg>Отыграй '.concat(fmt(w.left), " · ").concat(escapeHtml(burnLeft().replace(/ \d+ мин$/, "")));
+  renderWager();
 }
+function renderWager() {
+  const box = $("wager-card");
+  if (!box) return;
+  const w = me && me.wager;
+  box.classList.toggle("hidden", !w);
+  if (!w) return;
+  const pct2 = w.required ? Math.min(100, Math.round(w.done / w.required * 100)) : 100;
+  box.classList.toggle("ok", w.saved);
+  $("wg-title").textContent = w.saved ? "Баланс отыгран — колизы сохранятся" : "Отыграй баланс, чтобы сохранить колизы";
+  $("wg-time").textContent = burnLeft().replace(/ \d+ мин$/, "");
+  $("wg-fill").style.width = pct2 + "%";
+  $("wg-sub").innerHTML = w.saved ? "Поставлено ".concat(fmt(w.done), " из ").concat(fmt(w.required), ". Когда сутки закончатся, начнётся новый отыгрыш — с тем балансом, что будет на счёте.") : "Поставлено <b>".concat(fmt(w.done), "</b> из ").concat(fmt(w.required), " — осталось <b>").concat(fmt(w.left), "</b>. Не успеешь — сгорят ").concat(fmt(w.at_risk), " ").concat(koliz(w.at_risk)) + (w.protected ? ", а ".concat(fmt(w.protected), " из кэшбэка перейдут на следующие сутки.") : ".") + " Считаются только ставки на колизы — выигрыш или проигрыш неважен.";
+}
+$("burn-line").addEventListener("click", () => {
+  const w = me && me.wager;
+  if (!w) return;
+  if (w.saved) showToast("Баланс отыгран — колизы сохранятся. Каждые сутки нужно ставить в играх сумму баланса.");
+  else showPanel("activities");
+});
 setInterval(() => {
   if (me) {
     renderBurn();
@@ -4406,7 +4447,7 @@ function addToCart(pid, vid, qty) {
 function renderShopLimit() {
   if (!me || !me.withdraw) return;
   const w = me.withdraw;
-  $("shop-limit").innerHTML = w.spent_kind ? escapeHtml(w.reason || "Сегодня колизы уже потрачены") : "Тратить колизы можно <b>раз ".concat(escapeHtml(w.window_label), "</b>: либо заказ в магазине (до <b>").concat(fmt(w.limit), "</b>), либо списание на карту.") + (me.bonus_expires_at && me.balance > 0 ? " Без трат колизы сгорят через <b>".concat(escapeHtml(burnLeft()), "</b> — любая покупка, списание или ставка продлевает срок на сутки.") : "");
+  $("shop-limit").innerHTML = w.spent_kind ? escapeHtml(w.reason || "Сегодня колизы уже потрачены") : "Тратить колизы можно <b>раз ".concat(escapeHtml(w.window_label), "</b>: либо заказ в магазине (до <b>").concat(fmt(w.limit), "</b>), либо списание на карту.") + (me.wager && !me.wager.saved ? " Чтобы колизы не сгорели, за <b>".concat(escapeHtml(burnLeft()), "</b> отыграй ещё <b>").concat(fmt(me.wager.left), "</b> — ставками в играх.") : "");
   $("shop-locked").classList.toggle("hidden", !!me.phone_verified);
 }
 let shopTab = null;

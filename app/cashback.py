@@ -108,7 +108,7 @@ def decide(db, claim_id: int, ok: bool, who: str, amount: int | None = None) -> 
                 db.query(Client).filter(Client.id == cl.id).update(
                     {Client.balance: func.coalesce(Client.balance, 0) + c.cashback}, synchronize_session=False)
                 from . import bonus_expiry
-                bonus_expiry.touch(db, cl.id, now)        # свежий кэшбэк — полные сутки до сгорания
+                bonus_expiry.protect(db, cl.id, c.cashback)   # кэшбэк не сгорит в конце текущего окна — перейдёт в следующее
             cl.games_unlocked_at = cl.games_unlocked_at or now     # пополнение подтверждено — бесплатные игры открыты
             cl.games_locked = False
             cl.topup_check_state = "approved"

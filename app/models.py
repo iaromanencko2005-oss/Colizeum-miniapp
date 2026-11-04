@@ -92,6 +92,9 @@ class Client(Base):
     # бонусы, и не продлевается новыми начислениями. В срок всё, что осталось, сгорает.
     bonus_expires_at = Column(DateTime, nullable=True, index=True)
     bonus_warned = Column(Boolean, default=False)   # предупредили ли, что скоро сгорят
+    wager_since = Column(DateTime, nullable=True)          # начало текущего окна отыгрыша
+    wager_required = Column(Integer, nullable=True)        # баланс в начале окна — столько нужно поставить за сутки
+    wager_protected = Column(Integer, default=0)           # кэшбэк и подарки за это окно — не сгорают, переходят в новое
     # Профиль игрока — его видят другие гости (без имени и телефона)
     about = Column(String, nullable=True)
     games = Column(Text, nullable=True)            # JSON-список любимых игр

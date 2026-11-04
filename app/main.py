@@ -438,6 +438,7 @@ def client_to_dict(db: Session, client: Client) -> dict:
         "balance": client.balance or 0,
         "bonus_expires_at": (lambda d: d.isoformat() + "Z" if d else None)(bonus_expiry.deadline_for(client)),
         "bonus_ttl_hours": bonus_expiry.BONUS_TTL_HOURS,
+        "wager": bonus_expiry.progress(db, client),
         "monthly_topup": topup,
         "crm_found": crm_found,
         "withdraw": withdraw_info(db, client),
@@ -461,7 +462,7 @@ def client_to_dict(db: Session, client: Client) -> dict:
         "remaining_to_next_tier": remaining,
         "games": games,
         "games_lock": access.games_lock(db, client),
-        "tier_bonus": tier_bonus.info(db, client),
+        "tier_bonus": None,          # бонусы за уровень больше не начисляются — только кэшбэк по чеку
         "cashback": {k: v for k, v in cashback.info(db, client).items() if k in ("percent", "tier_label", "pending", "total")},
         "dice_bonus_per_point": DICE_BONUS_PER_POINT,
         "bet_config": {
@@ -1627,6 +1628,7 @@ async def api_cashback_submit(payload: CashbackPayload, db: Session = Depends(ge
 @app.post("/api/tier_bonus/claim")
 async def api_tier_bonus_claim(payload: InitDataPayload, db: Session = Depends(get_db)):
     client = consented_client(db, verify(payload.initData))
+    raise HTTPException(status_code=400, detail="Бонусы за уровень больше не начисляются — теперь кэшбэк за пополнение по чеку")
     try:
         row = tier_bonus.claim(db, client)
     except tier_bonus.TierBonusError as e:
@@ -1973,10 +1975,19 @@ async def expiry_tick():
     for w in warn:
         left = w["expires_at"] - datetime.utcnow()
         await bot_extra.tell(_bot_instance, w["tg_id"],
-                             (f"⏳ Через {format_wait(left)} сгорят {w['amount']:,} колизов на балансе COLIZEUM — "
-                              f"ты почти сутки ими не пользовался.\n"
-                              f"Любая трата продлит срок ещё на сутки: покупка в магазине приложения, списание "
-                              f"на карту гостя или ставка в игре.").replace(",", " "),
+                             (f"⏳ Через {format_wait(left)} сгорят {w['amount']:,} колизов на балансе COLIZEUM.\n\n"
+                              f"Чтобы сохранить их, отыграй ещё {w['left']:,} — сделай ставки в играх приложения "
+                              f"на эту сумму (из {w['required']:,} за сутки). Выиграешь или проиграешь — неважно, "
+                              f"главное поставить.\n"
+                              f"Списать на карту или потратить в магазине можно до {WITHDRAW_LIMIT} в сутки.").replace(",", " "),
+                             cabinet=True)
+    for b in burned:
+        if b["amount"] < bonus_expiry.WARN_MIN_BALANCE:
+            continue
+        kept = f" На балансе осталось {b['kept']:,} — кэшбэк и начисления клуба не сгорают, отыграй их за следующие сутки." if b["kept"] else ""
+        await bot_extra.tell(_bot_instance, b["tg_id"],
+                             (f"🔥 Сгорело {b['amount']:,} колизов — за сутки баланс не был отыгран.{kept}\n"
+                              f"Чтобы колизы не сгорали, ставь в играх сумму баланса хотя бы раз в сутки.").replace(",", " "),
                              cabinet=True)
     for oid, tg_id, total, refunded in expired_info:
         await bot_extra.tell(_bot_instance, tg_id, f"Заказ №{oid} не забрали вовремя. "

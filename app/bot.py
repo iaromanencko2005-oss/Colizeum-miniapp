@@ -46,7 +46,6 @@ logger = logging.getLogger("colizeum")
 # сюда не попадают — гостям они не нужны и всё равно не сработают.
 GUEST_COMMANDS = [
     BotCommand(command="start", description="Открыть личный кабинет"),
-    BotCommand(command="bonus", description="🎁 Пригласить друга и получить колизы"),
     BotCommand(command="phone", description="Подтвердить номер телефона"),
     BotCommand(command="stop", description="Отписаться от рассылки"),
 ]
@@ -207,16 +206,13 @@ async def cmd_start(message: Message, command: CommandObject):
                     tg_id=message.from_user.id, name=message.from_user.first_name or "", panel=panel, item=arg[len(prefix):])))]]))
             return
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [cabinet_button(ref, message.from_user)],
-        [InlineKeyboardButton(text="🎁 Получить колизы", callback_data="bonus")],
-    ])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[cabinet_button(ref, message.from_user)]])
     intro = ("Тебя пригласил друг — добро пожаловать в COLIZEUM!\n\n" if ref
              else "Добро пожаловать в COLIZEUM.\n\n")
     await message.answer(
         intro +
-        "Здесь — твой уровень и кэшбэк, акции клуба и мини-игры с призами. "
-        "Открывай, когда удобно.",
+        "В личном кабинете — твой уровень и кэшбэк за пополнение, игры, бронь мест, "
+        "заказ к месту и приглашение друзей. Всё внутри, жми кнопку 👇",
         reply_markup=keyboard,
     )
 
@@ -751,6 +747,8 @@ async def cmd_add_bonus(message: Message, command: CommandObject):
             )
             return
         client.balance = (client.balance or 0) + amount
+        from . import bonus_expiry
+        bonus_expiry.protect(db, client.id, amount)     # начисление от админа не сгорит в конце текущего окна
         db.commit()
         await message.answer(f"Начислено {amount} колизов. Баланс в приложении: {client.balance}.")
     finally:
@@ -1167,7 +1165,7 @@ async def cmd_games(message: Message):
             if since is not None:
                 bq = bq.filter(BonusBurn.created_at >= since)
             bn, bsum = bq.one()
-            lines.append(f"  Сгорело (не потратили за сутки): {fmt(bsum)} колизов у {fmt(bn)} гостей")
+            lines.append(f"  Сгорело (не отыграли за сутки): {fmt(bsum)} колизов у {fmt(bn)} гостей")
             lines.append("")
         await message.answer("\n".join(lines).strip())
     finally:
@@ -1261,8 +1259,8 @@ async def cmd_admin(message: Message):
         "Кэшбэк за пополнение\n"
         "Чеки приходят в чат персонала: «Начислить» — колизы гостю по статусу\n"
         "/cashback 12 1500 — начислить по чеку №12, если в CRM другая сумма, /cashbacks — непроверенные\n\n"
-        "Колизы (сгорают, только если сутки нет трат)\n"
-        "При балансе от 1000 списание — после игр на сумму баланса или чека о пополнении: чеки приходят в чат персонала\n"
+        "Колизы (сохраняются, если за сутки отыгран баланс — ставки в играх на его сумму; иначе сгорают, кроме кэшбэка и начислений админа)\n"
+        "Списать или потратить в магазине — до 300 в сутки\n"
         "/add_bonus +7… 150 — начислить в приложении\n"
         "/spend +7… 150 — списать в приложении\n\n"
         "Магазин\n"
@@ -1273,8 +1271,6 @@ async def cmd_admin(message: Message):
         "Дымок (кальяны)\n"
         "Заказы приходят в чат персонала с кнопками «Принял» и «Подан»\n"
         "/hookah — табаки, /hookah_off чизкейк — закончился, /hookah_on чизкейк — снова есть\n\n"
-        "Бонус уровня (раз в месяц)\n"
-        "Заявки приходят в чат персонала, /bonuses — кто ещё ждёт\n\n"
         "Новости клуба\n"
         "Фото с подписью /news Заголовок | Текст — новость с реакциями гостей\n"
         "/news_list — новости и реакции, публикация в группе и удаление\n\n"
